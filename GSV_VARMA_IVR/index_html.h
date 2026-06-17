@@ -10383,6 +10383,61 @@ function updateAnalyticsStats() {
 
 function updateAnalyticsCharts() {
   updateAnalyticsStats();
+  
+  if (typeof Chart === 'undefined') return;
+
+  // 1. Daily Calls
+  if (chartDaily && chartDaily.data && chartDaily.data.datasets[0]) {
+    const dailyData = [0, 0, 0, 0, 0, 0, 0]; // ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00']
+    callsData.forEach(c => {
+      if (!c.time) return;
+      const hour = parseInt(c.time.split(':')[0]) || 0;
+      if (hour < 9) dailyData[0]++;
+      else if (hour < 11) dailyData[1]++;
+      else if (hour < 13) dailyData[2]++;
+      else if (hour < 15) dailyData[3]++;
+      else if (hour < 17) dailyData[4]++;
+      else if (hour < 19) dailyData[5]++;
+      else dailyData[6]++;
+    });
+    chartDaily.data.datasets[0].data = dailyData;
+    chartDaily.update();
+  }
+
+  // 2. Weekly Calls
+  if (chartWeekly && chartWeekly.data && chartWeekly.data.datasets[0]) {
+    const weeklyData = [0, 0, 0, 0, 0, 0, 0]; // ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    callsData.forEach(c => {
+      let dObj = new Date();
+      if (c.date && c.date !== 'Local Session') {
+        dObj = new Date(c.date);
+      }
+      let day = dObj.getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
+      let idx = day === 0 ? 6 : day - 1; // Map to Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
+      if (idx >= 0 && idx < 7) {
+        weeklyData[idx]++;
+      }
+    });
+    chartWeekly.data.datasets[0].data = weeklyData;
+    chartWeekly.update();
+  }
+
+  // 3. Monthly Calls
+  if (chartMonthly && chartMonthly.data && chartMonthly.data.datasets[0]) {
+    const monthlyData = [0, 0, 0, 0, 0, 0]; // ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun']
+    callsData.forEach(c => {
+      let dObj = new Date();
+      if (c.date && c.date !== 'Local Session') {
+        dObj = new Date(c.date);
+      }
+      let month = dObj.getMonth(); // 0 = Jan, 1 = Feb, etc.
+      if (month >= 0 && month < 6) {
+        monthlyData[month]++;
+      }
+    });
+    chartMonthly.data.datasets[0].data = monthlyData;
+    chartMonthly.update();
+  }
 }
 
 
@@ -10411,7 +10466,7 @@ function initCharts() {
         labels: ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00'],
         datasets: [{
           label: 'Calls',
-          data:  [12, 19, 25, 18, 32, 15, 8],
+          data:  [0, 0, 0, 0, 0, 0, 0],
           backgroundColor: `rgba(243, 156, 18, 0.35)`,
           borderColor:     CYAN,
           borderWidth:     1.5,
@@ -10432,7 +10487,7 @@ function initCharts() {
         labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
         datasets: [{
           label: 'Calls',
-          data:  [85, 92, 110, 88, 115, 75, 60],
+          data:  [0, 0, 0, 0, 0, 0, 0],
           borderColor:     BLUE,
           backgroundColor: `rgba(79,172,254,0.08)`,
           tension:         0.4,
@@ -10456,7 +10511,7 @@ function initCharts() {
         labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
         datasets: [{
           label: 'Calls',
-          data:  [450, 480, 520, 490, 580, 510],
+          data:  [0, 0, 0, 0, 0, 0],
           borderColor:     GREEN,
           backgroundColor: `rgba(0,230,118,0.07)`,
           tension:         0.45,
@@ -11608,15 +11663,20 @@ let socket = null;
 
 async function loadInitialData() {
   try {
-    console.log('Loading initial status and logs from API...');
-    await Promise.all([
-      simulateApiCall('/api/status'),
-      simulateApiCall('/api/calls')
-    ]);
-    renderAllViews();
-    updateSidebarDots();
-    applyLogsFilters();
-    updateAnalyticsCharts();
+    if (isRealESP32) {
+      console.log('Loading initial real ESP32 data...');
+      await loadRealESP32Data();
+    } else {
+      console.log('Loading initial status and logs from API...');
+      await Promise.all([
+        simulateApiCall('/api/status'),
+        simulateApiCall('/api/calls')
+      ]);
+      renderAllViews();
+      updateSidebarDots();
+      applyLogsFilters();
+      updateAnalyticsCharts();
+    }
   } catch (err) {
     console.error('Error loading initial data:', err);
   }
@@ -11950,6 +12010,9 @@ async function loadRealESP32Data() {
         });
         callsData.sort((a, b) => b.id - a.id);
         filteredCalls = [...callsData];
+        applyLogsFilters();
+        updateAnalyticsCharts();
+        updateAllCallCounters();
       }
     } catch (logErr) {
       console.warn('Error fetching or parsing calls data:', logErr);
@@ -11999,7 +12062,9 @@ function setupSocketIO() {
   socket.on('connect_error', () => {
     console.warn('⚠️ Socket.IO connection error. Falling back to WebSocket Simulator & Mock API.');
     socket.close();
-    useMockApi = true;
+    if (!isRealESP32) {
+      useMockApi = true;
+    }
     setupWebSocketSimulator();
   });
  

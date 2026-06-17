@@ -34,6 +34,7 @@
 #include <NetBIOS.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <Update.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
 #include <SPI.h>
@@ -250,6 +251,13 @@ String validatingNumber = "";
 unsigned long ringingStartMillis = 0;
 unsigned long lastActivityTime = 0;
 
+// [OTA] Firmware URL — stored in NVS so it survives reboots.
+String otaFirmwareUrl = "https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/firmware.bin";      // Default raw binary URL
+String otaDescriptorUrl = "https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/version.json";  // Default JSON descriptor URL
+String otaStatus      = "idle";  // [OTA] idle | starting | downloading | flashing | success | failed
+bool   otaInProgress  = false;   // [OTA] Guard flag — prevents concurrent OTA attempts
+bool   otaAutoUpdate  = false;   // [OTA] Automatically check and update at boot
+
 // SIM800L Status variables
 bool gsmModuleConnected = false;
 String gsmSignal = "0";
@@ -339,6 +347,10 @@ void setupWebServer();
 bool isAuth();
 void sendLargePage(const char* data);
 void changeState(CallState newState);
+void otaTask(void* pvParameters);
+void triggerOtaUpdate();
+void otaAutoCheckTask(void* pvParameters);
+void validateTask(void *pvParameters);
 void playIvrAudio(String filename);
 void loadIvrNode(String nodeName);
 void processIvrDtmf(String key);
@@ -982,17 +994,36 @@ void parseGsmResponse(String line) {
         callerNumber = tempNumber;
         ringingStartMillis = millis();
         validatingNumber = tempNumber;
-        callerIsRegistered = true; // Auto-answering, count as registered
         
-        webLog("Incoming call. Auto-answering call immediately.");
-        validationResult = 1; // Direct auto-attend trigger
-        changeState(STATE_VALIDATING_CALLER);
+        if (callerValidationEnabled) {
+          webLog("Incoming call. Spawning validation task for: " + tempNumber);
+          validationResult = -1; // Pending
+          ValidateTaskData *vData = new ValidateTaskData();
+          vData->phoneNumber = tempNumber;
+          xTaskCreatePinnedToCore(validateTask, "validate_task", 16384, (void *)vData, 1, NULL, 0);
+          changeState(STATE_VALIDATING_CALLER);
+        } else {
+          callerIsRegistered = true; // Auto-answering, count as registered
+          webLog("Incoming call. Auto-answering call immediately.");
+          validationResult = 1; // Direct auto-attend trigger
+          changeState(STATE_VALIDATING_CALLER);
+        }
       } else if (currentCallState == STATE_ACTIVE_CALL || currentCallState == STATE_COLLECTING_DTMF) {
         webLog("Line busy. Auto-answering secondary caller: " + tempNumber);
         validatingNumber = tempNumber;
-        callerIsRegistered = true;
-        validationResult = 1; // Direct auto-attend second call trigger
-        changeState(STATE_VALIDATING_SECOND_CALL);
+        
+        if (callerValidationEnabled) {
+          webLog("Spawning validation task for secondary caller: " + tempNumber);
+          validationResult = -1; // Pending
+          ValidateTaskData *vData = new ValidateTaskData();
+          vData->phoneNumber = tempNumber;
+          xTaskCreatePinnedToCore(validateTask, "validate_task", 16384, (void *)vData, 1, NULL, 0);
+          changeState(STATE_VALIDATING_SECOND_CALL);
+        } else {
+          callerIsRegistered = true;
+          validationResult = 1; // Direct auto-attend second call trigger
+          changeState(STATE_VALIDATING_SECOND_CALL);
+        }
       } else {
         webLog("Concurrently rejecting call from: " + tempNumber + " (current state: " + String((int)currentCallState) + ")");
         Serial2.println("ATH");
@@ -2165,6 +2196,102 @@ void setupWebServer() {
     server.send(200, "application/json", "{}");
   });
 
+  // ==================== OTA UPDATE ROUTES ====================
+  // [OTA] GET /ota_status — Poll-friendly; no auth needed for progress polling.
+  server.on("/ota_status", HTTP_GET, []() {
+    StaticJsonDocument<256> doc;
+    doc["status"]     = otaStatus;
+    doc["inProgress"] = otaInProgress;
+    doc["urlSet"]     = (otaFirmwareUrl.length() > 0); // [OTA] true if URL has been saved
+    doc["url"]        = otaFirmwareUrl;                // [OTA] Return URL so dashboard can show it
+    doc["descriptorUrl"] = otaDescriptorUrl;
+    doc["autoUpdate"] = otaAutoUpdate;                 // Return auto-update state
+    String resp;
+    serializeJson(doc, resp);
+    server.send(200, "application/json", resp);
+  });
+
+  // [OTA] POST /api/ota_save_descriptor — Saves descriptor URL to NVS.
+  server.on("/api/ota_save_descriptor", HTTP_POST, []() {
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    if (!server.hasArg("url")) {
+      server.send(400, "application/json", "{\"error\":\"Missing url parameter\"}");
+      return;
+    }
+    String newUrl = server.arg("url");
+    newUrl.trim();
+    otaDescriptorUrl = newUrl;                        // Update runtime variable
+    preferences.begin("wifi-config", false);
+    preferences.putString("otaDescUrl", otaDescriptorUrl); // Persist to NVS
+    preferences.end();
+    webLog("[OTA] Descriptor URL saved: " + otaDescriptorUrl);
+    server.send(200, "application/json", "{\"success\":true}");
+  });
+
+  // [OTA] POST /api/ota_auto_update — Save auto update preference.
+  server.on("/api/ota_auto_update", HTTP_POST, []() {
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    if (server.hasArg("enabled")) {
+      otaAutoUpdate = (server.arg("enabled") == "true");
+      preferences.begin("wifi-config", false);
+      preferences.putBool("otaAuto", otaAutoUpdate);
+      preferences.end();
+      webLog("[OTA] Auto-update config saved: " + String(otaAutoUpdate ? "ENABLED" : "DISABLED"));
+      server.send(200, "application/json", "{\"success\":true}");
+    } else {
+      server.send(400, "application/json", "{\"error\":\"Missing enabled parameter\"}");
+    }
+  });
+
+  // [OTA] GET /ota_get_url — Returns the saved firmware URL (requires auth).
+  server.on("/ota_get_url", HTTP_GET, []() {
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    StaticJsonDocument<512> doc;
+    doc["url"] = otaFirmwareUrl;
+    String resp;
+    serializeJson(doc, resp);
+    server.send(200, "application/json", resp);
+  });
+
+  // [OTA] POST /ota_save_url — Saves firmware URL to NVS (persists across reboots).
+  //        Body param: url=https://github.com/...
+  server.on("/ota_save_url", HTTP_POST, []() {
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    if (!server.hasArg("url")) {
+      server.send(400, "application/json", "{\"error\":\"Missing url parameter\"}");
+      return;
+    }
+    String newUrl = server.arg("url");
+    newUrl.trim();
+    otaFirmwareUrl = newUrl;                          // [OTA] Update runtime variable
+    preferences.begin("wifi-config", false);
+    preferences.putString("otaUrl", otaFirmwareUrl);  // [OTA] Persist to NVS
+    preferences.end();
+    webLog("[OTA] Firmware URL saved: " + otaFirmwareUrl);
+    server.send(200, "application/json", "{\"success\":true}");
+  });
+
+  // [OTA] POST /ota_trigger — Downloads firmware and flashes. Requires auth.
+  server.on("/ota_trigger", HTTP_POST, []() {
+    if (!isAuth()) {
+      server.send(403, "application/json", "{\"error\":\"Unauthorized\"}");
+      return;
+    }
+    if (otaFirmwareUrl.length() == 0) {
+      server.send(400, "application/json",
+        "{\"error\":\"No firmware URL saved. Set it in OTA Settings first.\"}");
+      return;
+    }
+    if (otaInProgress) {
+      server.send(409, "application/json", "{\"error\":\"OTA already in progress\"}");
+      return;
+    }
+    triggerOtaUpdate();
+    server.send(200, "application/json",
+      "{\"success\":true,\"message\":\"OTA update started. Poll /ota_status for progress.\"}");
+  });
+  // ==================== END OTA UPDATE ROUTES ====================
+
   server.onNotFound([]() {
     if (currentSystemState == SYSTEM_WIFI_CONFIG) {
       server.sendHeader("Location", "http://" + WiFi.softAPIP().toString() + "/", true);
@@ -2176,6 +2303,184 @@ void setupWebServer() {
 
   server.begin();
   serverStarted = true;
+}
+
+// ==================== OTA UPDATE (OVER-THE-AIR) ====================
+// [OTA] FreeRTOS task — downloads firmware from OTA_FIRMWARE_URL and flashes it.
+// Pinned to Core 1 with 16 KB stack, same pattern as other HTTP tasks in this project.
+void otaTask(void* pvParameters) {
+  webLog("[OTA] Download started from configured URL...");
+  otaStatus = "downloading";
+
+  String url = otaFirmwareUrl; // [OTA] URL loaded from NVS or set via dashboard
+
+  // [OTA] Support both plain HTTP and HTTPS firmware servers
+  WiFiClient        plainClient;
+  WiFiClientSecure  secureClient;
+  secureClient.setInsecure(); // [OTA] Bypass SSL cert check — acceptable for firmware hosted on trusted internal server
+
+  HTTPClient http;
+  bool begun = url.startsWith("https://")
+                 ? http.begin(secureClient, url)
+                 : http.begin(plainClient,  url);
+
+  if (!begun) {
+    webLog("[OTA] Failed to connect to firmware URL.");
+    otaStatus = "failed";
+    otaInProgress = false;
+    vTaskDelete(NULL);
+    return;
+  }
+
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  int httpCode = http.GET();
+  webLog("[OTA] Server response: HTTP " + String(httpCode));
+
+  if (httpCode != HTTP_CODE_OK) {
+    webLog("[OTA] Download failed. Aborting update.");
+    http.end();
+    otaStatus = "failed";
+    otaInProgress = false;
+    vTaskDelete(NULL);
+    return;
+  }
+
+  int contentLen = http.getSize();
+  webLog("[OTA] Firmware size: " + String(contentLen) + " bytes");
+
+  if (contentLen <= 0) {
+    webLog("[OTA] Server returned no content-length. Aborting.");
+    http.end();
+    otaStatus = "failed";
+    otaInProgress = false;
+    vTaskDelete(NULL);
+    return;
+  }
+
+  // [OTA] Begin OTA partition write — Update.begin() reserves flash space
+  if (!Update.begin(contentLen)) {
+    webLog("[OTA] Not enough flash space. Error code: " + String(Update.getError()));
+    http.end();
+    otaStatus = "failed";
+    otaInProgress = false;
+    vTaskDelete(NULL);
+    return;
+  }
+
+  otaStatus = "flashing";
+  webLog("[OTA] Writing firmware to flash...");
+
+  // [OTA] Stream firmware bytes directly from HTTP response into flash
+  WiFiClient* stream  = http.getStreamPtr();
+  size_t      written = Update.writeStream(*stream);
+
+  webLog("[OTA] Bytes written: " + String(written) + " / " + String(contentLen));
+
+  if (!Update.end()) {
+    webLog("[OTA] Update.end() failed. Error code: " + String(Update.getError()));
+    http.end();
+    otaStatus = "failed";
+    otaInProgress = false;
+    vTaskDelete(NULL);
+    return;
+  }
+
+  if (!Update.isFinished()) {
+    webLog("[OTA] Update did not finish cleanly. Error code: " + String(Update.getError()));
+    http.end();
+    otaStatus = "failed";
+    otaInProgress = false;
+    vTaskDelete(NULL);
+    return;
+  }
+
+  http.end();
+  otaStatus = "success";
+  webLog("[OTA] Firmware flashed successfully! Rebooting in 3 seconds...");
+  // [OTA] Brief delay so the /ota_status endpoint can report "success" before reboot
+  delay(3000);
+  ESP.restart();
+  vTaskDelete(NULL);
+}
+
+// [OTA] Called by the web route handler to validate conditions and spawn otaTask
+void triggerOtaUpdate() {
+  if (otaInProgress) {
+    webLog("[OTA] Update already in progress — ignoring duplicate trigger.");
+    return;
+  }
+  if (otaFirmwareUrl.length() == 0) {
+    webLog("[OTA] No firmware URL set. Configure it in the dashboard OTA Settings tab.");
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    webLog("[OTA] WiFi not connected. Cannot start OTA.");
+    return;
+  }
+  otaInProgress = true;
+  otaStatus     = "starting";
+  webLog("[OTA] Spawning OTA task on Core 1...");
+  // [OTA] 16 KB stack — required for TLS handshake + Update write buffer
+  xTaskCreatePinnedToCore(otaTask, "ota_task", 16384, NULL, 1, NULL, 1);
+}
+
+// [OTA AUTO] Automatic background update task at startup
+void otaAutoCheckTask(void* pvParameters) {
+  webLog("[OTA AUTO] Checking for updates at boot...");
+  
+  if (otaDescriptorUrl.length() == 0) {
+    webLog("[OTA AUTO] Descriptor URL is empty. Aborting auto-update.");
+    vTaskDelete(NULL);
+    return;
+  }
+  
+  // Wait a few seconds for network interfaces to stabilize
+  vTaskDelay(pdMS_TO_TICKS(5000));
+  
+  WiFiClientSecure secureClient;
+  secureClient.setInsecure();
+  
+  HTTPClient http;
+  bool begun = http.begin(secureClient, otaDescriptorUrl);
+  if (!begun) {
+    webLog("[OTA AUTO] Failed to connect to version descriptor URL.");
+    vTaskDelete(NULL);
+    return;
+  }
+
+  int httpCode = http.GET();
+  if (httpCode == HTTP_CODE_OK) {
+    String payload = http.getString();
+    StaticJsonDocument<512> doc;
+    DeserializationError error = deserializeJson(doc, payload);
+    
+    if (!error) {
+      const char* newVersion = doc["version"];
+      const char* binUrl = doc["url"];
+      
+      if (newVersion && binUrl && strcmp(newVersion, FIRMWARE_VERSION) != 0) {
+        webLog("[OTA AUTO] New version found: " + String(newVersion) + " (current: " + FIRMWARE_VERSION + ")");
+        webLog("[OTA AUTO] Starting auto-update from: " + String(binUrl));
+        
+        // Save URL to otaFirmwareUrl and trigger update
+        otaFirmwareUrl = String(binUrl);
+        preferences.begin("wifi-config", false);
+        preferences.putString("otaUrl", otaFirmwareUrl);
+        preferences.end();
+        
+        triggerOtaUpdate();
+      } else {
+        webLog("[OTA AUTO] Firmware is up-to-date.");
+      }
+    } else {
+      webLog("[OTA AUTO] Failed to parse version JSON descriptor.");
+    }
+  } else {
+    webLog("[OTA AUTO] Failed to fetch version descriptor, HTTP Code: " + String(httpCode));
+  }
+  
+  http.end();
+  vTaskDelete(NULL);
 }
 
 // GSM Initialization Helper
@@ -2343,6 +2648,10 @@ void setup() {
   testPhoneNumber = preferences.getString("testPhone", "");
   testSmsTemplate = preferences.getString("testSmsTmp", "Dear customer, you called but did not select any options. Thank you for calling V-Varma. Website: vvarma.gsvee.in");
   
+  otaFirmwareUrl  = preferences.getString("otaUrl", "https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/firmware.bin"); // [OTA] Load saved firmware URL from NVS
+  otaDescriptorUrl = preferences.getString("otaDescUrl", "https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/version.json"); // Load saved descriptor URL
+  otaAutoUpdate   = preferences.getBool("otaAuto", false); // [OTA] Load auto update setting
+
   preferences.end();
 
   if (savedSSID.length() > 0) {
@@ -2375,6 +2684,10 @@ void setup() {
       
       setupWebServer();
       mDNS_begin();
+      if (otaAutoUpdate) {
+        webLog("[OTA AUTO] Spawning auto-update check task...");
+        xTaskCreate(otaAutoCheckTask, "ota_auto_check", 8192, NULL, 1, NULL);
+      }
     } else {
       webLog("WiFi connection timeout. Entering captive portal setup...");
       playErrorSound();
@@ -2470,6 +2783,7 @@ void loop() {
     if (validationResult == 1) {
       callerIsRegistered = true;
       webLog("Caller Validated. Answering call physically via ATA...");
+      delay(1000); // 1-second delay for stability
       if (sendATCommand("ATA", "OK", 5000)) {
         webLog("Call physically answered successfully.");
         if (customIvrEnabled) {
