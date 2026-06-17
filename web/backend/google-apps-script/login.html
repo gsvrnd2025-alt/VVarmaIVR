@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base target="_top">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Login - V-VARMA</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    <?!= include('shared_styles'); ?>
+    <style>
+        body {
+            background-color: #f0f2f5;
+            font-family: 'Poppins', sans-serif;
+        }
+        .login-container {
+            min-height: 80vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .login-card {
+            width: 100%;
+            max-width: 500px;
+            background: white;
+            border-radius: 24px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.12);
+            overflow: hidden;
+            border: none;
+        }
+        .login-header {
+            background: linear-gradient(135deg, var(--brown) 0%, #4a2c10 100%);
+            padding: 40px 20px;
+            text-align: center;
+            color: white;
+            position: relative;
+        }
+        .login-tabs {
+            background: #fff;
+            border-bottom: 2px solid #f0f0f0;
+            display: flex;
+            justify-content: space-around;
+        }
+        .login-tab {
+            padding: 16px 5px;
+            cursor: pointer;
+            font-weight: 700;
+            color: #999;
+            flex: 1;
+            text-align: center;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border-bottom: 3px solid transparent;
+            font-size: 0.8rem;
+            letter-spacing: 0.5px;
+        }
+        .login-tab:hover {
+            color: var(--orange);
+            background: #fff9f2;
+        }
+        .login-tab.active {
+            color: var(--orange);
+            border-bottom-color: var(--orange);
+            background: #fff9f2;
+        }
+        .login-form-container {
+            padding: 40px;
+        }
+        .form-floating > .form-control:focus ~ label,
+        .form-floating > .form-control:not(:placeholder-shown) ~ label {
+            color: var(--orange);
+        }
+        .btn-login {
+            background: var(--orange);
+            color: white;
+            padding: 14px;
+            border-radius: 14px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            transition: all 0.4s;
+            border: none;
+            width: 100%;
+            margin-top: 15px;
+            text-transform: uppercase;
+        }
+        .btn-login:hover {
+            background: #e55a00;
+            transform: translateY(-3px);
+            box-shadow: 0 10px 20px rgba(241, 137, 18, 0.4);
+        }
+        .role-icon {
+            font-size: 2.5rem;
+            margin-bottom: 12px;
+            display: block;
+            filter: drop-shadow(0 4px 8px rgba(0,0,0,0.2));
+            transition: all 0.5s ease;
+        }
+        
+        @media (max-width: 576px) {
+            .login-tab { font-size: 0.7rem; }
+            .login-form-container { padding: 25px; }
+        }
+
+        .login-role-btn {
+            background: rgba(37, 17, 3, 0.05) !important;
+            color: #4a2c10 !important; /* Elegant dark brown text for maximum contrast and legibility */
+            opacity: 0.7;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            font-weight: 700 !important;
+        }
+
+        .login-role-btn.active {
+            opacity: 1 !important;
+            color: #fff !important;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+            transform: scale(1.02);
+        }
+
+        .login-role-btn:hover:not(.active) {
+            opacity: 0.95;
+            background: rgba(37, 17, 3, 0.1) !important;
+            color: #251103 !important;
+        }
+
+        /* Highly visible, premium, and distinct dynamic colors for each active tab */
+        #btn-customer.active {
+            background-color: var(--skyblue) !important; /* Skyblue for Customer active */
+        }
+
+        #btn-vendor.active {
+            background-color: #6f42c1 !important; /* Deep Purple for Dealer active */
+        }
+
+        #btn-tech.active {
+            background-color: #20c997 !important; /* Vibrant Teal for Tech active */
+        }
+
+        #btn-admin.active {
+            background-color: var(--orange) !important; /* Bright V-VARMA Orange for Admin active */
+        }
+    </style>
+</head>
+<body>
+    <?!= include('navbar'); ?>
+
+    <div class="login-container">
+        <div class="login-card">
+            <div class="login-header">
+                <div id="headerIcon" class="role-icon">
+                    <i class="fas fa-user-circle"></i>
+                </div>
+                <h3 id="headerTitle" class="fw-bold mb-1">User Login</h3>
+                <p id="headerSubtitle" class="text-white-50 small mb-0">Access your V-VARMA dashboard</p>
+            </div>
+            
+            <div class="p-3">
+                <ul class="nav nav-pills nav-fill bg-light rounded-pill p-1" id="loginTabs" role="tablist">
+                    <li class="nav-item">
+                        <button class="nav-link active rounded-pill fw-bold login-role-btn" id="btn-customer" onclick="switchRole('customer')">CUSTOMER</button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link rounded-pill fw-bold login-role-btn" id="btn-vendor" onclick="switchRole('vendor')">DEALERS</button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link rounded-pill fw-bold login-role-btn" id="btn-tech" onclick="switchRole('tech')">TECH</button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link rounded-pill fw-bold login-role-btn" id="btn-admin" onclick="switchRole('admin')">ADMIN</button>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="login-form-container">
+                <div id="loginError" class="alert alert-danger d-none animate__animated animate__shakeX" role="alert" style="border-radius: 12px; font-size: 0.9rem;">
+                    <i class="fas fa-exclamation-circle me-2"></i>
+                    <span id="errorMessage"></span>
+                </div>
+
+                <form id="loginForm" onsubmit="handleUnifiedLogin(event)">
+                    <input type="hidden" id="currentRole" value="customer">
+                    
+                    <div class="form-floating mb-3">
+                        <input type="text" class="form-control" id="loginUser" placeholder="Username / Mobile" required>
+                        <label id="userLabel"><i class="fas fa-mobile-alt me-2"></i>Mobile Number</label>
+                    </div>
+                    
+                    <div class="form-floating mb-4">
+                        <input type="password" class="form-control" id="loginPass" placeholder="Password" required>
+                        <label id="passLabel"><i class="fas fa-lock me-2"></i>Password</label>
+                    </div>
+
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn-login shadow-sm" id="loginBtn">
+                            <span id="loginSpinner" class="spinner-border spinner-border-sm me-2" style="display: none;"></span>
+                            <span id="loginBtnText">SIGN IN</span>
+                        </button>
+                    </div>
+
+                    <div class="text-center mt-4">
+                        <a href="#" class="text-decoration-none text-muted small fw-600" onclick="alert('Please contact V-VARMA support at 9092610415 for password reset.')">
+                            Forgot your password?
+                        </a>
+                    </div>
+
+                    <div class="text-center mt-3" id="registrationLinkContainer">
+                        <!-- Contextual registration link will be injected here -->
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <?!= include('floating_icons'); ?>
+    <?!= include('chat_widget'); ?>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Global Application Configuration
+        const APP_CONFIG = {
+            appUrl: '<?!= appUrl ?>',
+            version: '<?!= version ?>',
+            currentPage: '<?!= currentPage ?>'
+        };
+    </script>
+    <?!= include('shared_scripts.js'); ?>
+
+    <script>
+        const roleData = {
+            customer: {
+                icon: 'fas fa-user-circle',
+                title: 'Customer Login',
+                subtitle: 'Manage your warranties & complaints',
+                userLabel: '<i class="fas fa-mobile-alt me-2"></i>Mobile Number',
+                color: 'var(--skyblue)',
+                regText: 'New user? Click here to register as Customer.',
+                regTab: ''
+            },
+            vendor: {
+                icon: 'fas fa-store',
+                title: 'Dealer Portal',
+                subtitle: 'Register warranties & manage sales',
+                userLabel: '<i class="fas fa-user me-2"></i>Username / Mobile',
+                color: '#6f42c1',
+                regText: 'New dealer? Click here to register as Dealer.',
+                regTab: 'dealer'
+            },
+            tech: {
+                icon: 'fas fa-tools',
+                title: 'Technician Hub',
+                subtitle: 'View assigned service requests',
+                userLabel: '<i class="fas fa-id-badge me-2"></i>Technician ID',
+                color: '#20c997',
+                regText: 'New technician? Click here to register as Technician.',
+                regTab: 'tech'
+            },
+            admin: {
+                icon: 'fas fa-user-shield',
+                title: 'Admin Console',
+                subtitle: 'System Management Access',
+                userLabel: '<i class="fas fa-shield-alt me-2"></i>Admin Username',
+                color: 'var(--orange)'
+            }
+        };
+
+        function switchRole(role) {
+            console.log('Switching to role:', role);
+            // Update Active Tab UI
+            document.querySelectorAll('.login-role-btn').forEach(t => {
+                t.classList.remove('active');
+                t.style.backgroundColor = ''; // Reset inline style
+            });
+            
+            const activeTab = document.getElementById('btn-' + role);
+            if (activeTab) activeTab.classList.add('active');
+            
+            // Update Header & Labels
+            const data = roleData[role] || roleData['customer'];
+            document.getElementById('headerIcon').innerHTML = `<i class="${data.icon}"></i>`;
+            document.getElementById('headerTitle').innerText = data.title;
+            document.getElementById('headerSubtitle').innerText = data.subtitle;
+            document.getElementById('userLabel').innerHTML = data.userLabel;
+            document.getElementById('currentRole').value = role;
+            
+            // Apply dynamic colors
+            document.getElementById('headerIcon').style.color = data.color;
+            if (activeTab) activeTab.style.backgroundColor = data.color;
+            document.getElementById('loginBtn').style.background = data.color;
+
+            // Update Registration Link
+            const regContainer = document.getElementById('registrationLinkContainer');
+            if (data.regText) {
+                regContainer.innerHTML = `<a href="${APP_CONFIG.appUrl}?page=register${data.regTab ? '&tab=' + data.regTab : ''}" class="text-decoration-none small fw-bold" style="color: ${data.color}">
+                    <i class="fas fa-user-plus me-1"></i> ${data.regText}
+                </a>`;
+            } else {
+                regContainer.innerHTML = '';
+            }
+
+            // Reset Error State
+            const errorDiv = document.getElementById('loginError');
+            if (errorDiv) errorDiv.classList.add('d-none');
+        }
+
+        function handleUnifiedLogin(e) {
+            e.preventDefault();
+            const role = document.getElementById('currentRole').value;
+            
+            // UI Feedback
+            const btnText = document.getElementById('loginBtnText');
+            const spinner = document.getElementById('loginSpinner');
+            btnText.innerText = 'AUTHENTICATING...';
+            spinner.style.display = 'inline-block';
+            
+            // Call shared auth logic
+            handleLogin(role, e);
+        }
+
+        // Initialize from URL query or default to customer
+        document.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            const role = params.get('role') || 'customer';
+            switchRole(role);
+        });
+    </script>
+</body>
+</html>

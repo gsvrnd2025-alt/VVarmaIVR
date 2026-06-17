@@ -1,0 +1,1057 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign Up | V-VARMA</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <?!= include('shared_styles'); ?>
+    <style>
+        :root {
+            --v-blue: #1a237e;
+            --v-orange: #ff6f00;
+            --v-teal: #00897b;
+            --v-lavender: #7b1fa2;
+            --v-pink: #d81b60;
+            --v-green: #2e7d32;
+        }
+
+        body {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            font-family: 'Outfit', sans-serif;
+            min-height: 100vh;
+        }
+
+        .signup-container {
+            max-width: 950px;
+            margin: 40px auto;
+            padding: 0 15px;
+        }
+
+        .signup-card {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(20px);
+            border-radius: 28px;
+            box-shadow: 0 40px 100px rgba(0, 0, 0, 0.15);
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            margin-bottom: 50px;
+            transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+        }
+
+        .signup-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            border-radius: 28px;
+            padding: 2px;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.1));
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            pointer-events: none;
+        }
+
+        /* DYNAMIC THEME GLOWS */
+        .theme-customer {
+            box-shadow: 0 0 50px rgba(123, 31, 162, 0.15), 0 40px 100px rgba(0, 0, 0, 0.15) !important;
+        }
+
+        .theme-dealer {
+            box-shadow: 0 0 50px rgba(26, 35, 126, 0.15), 0 40px 100px rgba(0, 0, 0, 0.15) !important;
+        }
+
+        .theme-tech {
+            box-shadow: 0 0 50px rgba(46, 125, 50, 0.15), 0 40px 100px rgba(0, 0, 0, 0.15) !important;
+        }
+
+        /* TAB NAVIGATION - VIBRANT & VISIBLE */
+        .nav-tabs {
+            border: none;
+            background: #ffffff;
+            /* Solid white background to eliminate any card blur interference */
+            padding: 15px;
+            gap: 15px;
+            display: flex;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+            border-radius: 28px 28px 0 0;
+        }
+
+        .nav-link {
+            border: 2px solid transparent !important;
+            border-radius: 18px !important;
+            font-weight: 800;
+            padding: 16px 20px;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            letter-spacing: 1.2px;
+            flex: 1;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* CUSTOMER TAB - LAVENDER/PINK */
+        .nav-link#customer-tab {
+            background: var(--v-lavender);
+            color: white !important;
+            border: 2px solid var(--v-lavender) !important;
+            opacity: 0.85;
+        }
+
+        .nav-link#customer-tab:hover {
+            opacity: 1;
+            transform: translateY(-3px);
+        }
+
+        .nav-link#customer-tab.active {
+            background: linear-gradient(135deg, var(--v-lavender) 0%, var(--v-pink) 100%) !important;
+            opacity: 1;
+            transform: scale(1.05);
+            box-shadow: 0 12px 25px rgba(123, 31, 162, 0.4);
+        }
+
+        /* DEALER TAB - BLUE */
+        .nav-link#dealer-tab {
+            background: var(--v-blue);
+            color: white !important;
+            border: 2px solid var(--v-blue) !important;
+            opacity: 0.85;
+        }
+
+        .nav-link#dealer-tab:hover {
+            opacity: 1;
+            transform: translateY(-3px);
+        }
+
+        .nav-link#dealer-tab.active {
+            background: linear-gradient(135deg, var(--v-blue) 0%, #0d47a1 100%) !important;
+            opacity: 1;
+            transform: scale(1.05);
+            box-shadow: 0 12px 25px rgba(26, 35, 126, 0.4);
+        }
+
+        /* TECH TAB - GREEN */
+        .nav-link#tech-tab {
+            background: var(--v-green);
+            color: white !important;
+            border: 2px solid var(--v-green) !important;
+            opacity: 0.85;
+        }
+
+        .nav-link#tech-tab:hover {
+            opacity: 1;
+            transform: translateY(-3px);
+        }
+
+        .nav-link#tech-tab.active {
+            background: linear-gradient(135deg, var(--v-green) 0%, #1b5e20 100%) !important;
+            opacity: 1;
+            transform: scale(1.05);
+            box-shadow: 0 12px 25px rgba(46, 125, 50, 0.4);
+        }
+
+        .tab-content {
+            padding: 0;
+            background: transparent;
+        }
+
+        /* SHARED HEADER STYLE */
+        .pane-header {
+            padding: 40px 20px;
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .pane-header i {
+            font-size: 3rem;
+            margin-bottom: 15px;
+        }
+
+        .pane-header h2 {
+            font-weight: 800;
+            letter-spacing: -0.5px;
+        }
+
+        .header-customer {
+            background: linear-gradient(135deg, var(--v-lavender) 0%, var(--v-pink) 100%);
+        }
+
+        .header-dealer {
+            background: linear-gradient(135deg, #1a237e 0%, #0d47a1 100%);
+        }
+
+        .header-tech {
+            background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%);
+        }
+
+        .pane-body {
+            padding: 0 40px 50px;
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        /* FORM STYLING */
+        .form-label {
+            font-weight: 700;
+            color: #343a40;
+            font-size: 0.85rem;
+            margin-bottom: 8px;
+        }
+
+        .form-control,
+        .form-select {
+            border-radius: 12px;
+            padding: 12px 15px;
+            border: 2px solid #e9ecef;
+            transition: all 0.2s;
+            background-color: #f8f9fa;
+        }
+
+        .form-control:focus {
+            background-color: #fff;
+            border-color: var(--v-blue);
+            box-shadow: 0 0 0 4px rgba(13, 71, 161, 0.1);
+        }
+
+        .dealer-focus:focus {
+            border-color: var(--v-blue);
+            box-shadow: 0 0 0 4px rgba(26, 35, 126, 0.1);
+        }
+
+        .tech-focus:focus {
+            border-color: var(--v-green);
+            box-shadow: 0 0 0 4px rgba(46, 125, 50, 0.1);
+        }
+
+        .cust-focus:focus {
+            border-color: var(--v-lavender);
+            box-shadow: 0 0 0 4px rgba(123, 31, 162, 0.1);
+        }
+
+        .section-title {
+            font-size: 1rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 40px 0 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f1f3f5;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-customer {
+            color: var(--v-lavender);
+        }
+
+        .section-dealer {
+            color: var(--v-blue);
+        }
+
+        .section-tech {
+            color: var(--v-green);
+        }
+
+        .section-danger {
+            color: #dc3545;
+            border-bottom-color: #ffeef0;
+        }
+
+        .btn-signup {
+            border: none;
+            border-radius: 14px;
+            padding: 18px;
+            color: white;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            transition: all 0.3s;
+            width: 100%;
+        }
+
+        .btn-customer {
+            background: linear-gradient(135deg, var(--v-lavender) 0%, var(--v-pink) 100%);
+        }
+
+        .btn-dealer {
+            background: var(--v-blue);
+        }
+
+        .btn-tech {
+            background: var(--v-green);
+        }
+
+        .btn-signup:hover {
+            transform: translateY(-3px) scale(1.02);
+            filter: brightness(1.1);
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn-signup:active {
+            transform: translateY(0);
+        }
+
+        /* SHIMMER EFFECT */
+        @keyframes shimmer {
+            0% {
+                transform: translateX(-100%);
+            }
+
+            100% {
+                transform: translateX(100%);
+            }
+        }
+
+        .btn-signup {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-signup::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transform: translateX(-100%);
+            animation: shimmer 3s infinite;
+        }
+
+        /* PANE ANIMATION */
+        .tab-pane {
+            animation: slideUp 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        #map {
+            height: 350px;
+            border-radius: 20px;
+            border: 2px solid #e9ecef;
+            margin-top: 10px;
+        }
+
+        .upload-area {
+            border: 2px dashed #dee2e6;
+            border-radius: 16px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            background: #f8f9fa;
+            transition: all 0.2s;
+        }
+
+        .upload-area:hover {
+            border-color: var(--v-blue);
+            background: #f1f3f5;
+        }
+
+        .upload-dealer:hover {
+            border-color: var(--v-blue);
+            background: #e8eaf6;
+        }
+
+        .upload-tech:hover {
+            border-color: var(--v-green);
+            background: #e8f5e9;
+        }
+
+        .upload-customer:hover {
+            border-color: var(--v-lavender);
+            background: #f3e5f5;
+        }
+
+        .gps-btn {
+            background: #e7f3ff;
+            color: #007bff;
+            border: none;
+            border-radius: 10px;
+            padding: 8px 15px;
+            font-weight: 700;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+
+<body>
+    <?!= include('navbar'); ?>
+
+    <div class="signup-container">
+        <div class="signup-card">
+            <ul class="nav nav-tabs" id="signupTabs" role="tablist">
+                <li class="nav-item">
+                    <button class="nav-link active" id="customer-tab" data-bs-toggle="tab"
+                        data-bs-target="#customer-pane" type="button" role="tab">
+                        <i class="fas fa-user"></i>Customer
+                    </button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link" id="dealer-tab" data-bs-toggle="tab" data-bs-target="#dealer-pane"
+                        type="button" role="tab">
+                        <i class="fas fa-handshake"></i>Dealer
+                    </button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link" id="tech-tab" data-bs-toggle="tab" data-bs-target="#tech-pane"
+                        type="button" role="tab">
+                        <i class="fas fa-tools"></i>Technician
+                    </button>
+                </li>
+            </ul>
+
+            <div class="tab-content">
+                <!-- CUSTOMER PANE -->
+                <div class="tab-pane fade show active" id="customer-pane" role="tabpanel">
+                    <div class="pane-header header-customer">
+                        <i class="fas fa-user-circle"></i>
+                        <h2>Customer Sign Up</h2>
+                        <p class="mb-0 opacity-75">Securely join the V-VARMA ecosystem.</p>
+                    </div>
+                    <div class="pane-body">
+                        <form id="customerSignupForm">
+                            <div class="section-title section-customer"><i class="fas fa-info-circle"></i> Basic
+                                Information</div>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Full Name *</label>
+                                    <input type="text" name="name" class="form-control" placeholder="Enter your name"
+                                        required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Phone Number *</label>
+                                    <input type="tel" name="mobile" class="form-control" placeholder="10-digit mobile"
+                                        required pattern="[0-9]{10}">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Email Address (Optional)</label>
+                                    <input type="email" name="email" class="form-control"
+                                        placeholder="example@email.com">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Date of Birth</label>
+                                    <input type="date" name="dob" class="form-control">
+                                </div>
+                            </div>
+
+                            <div class="section-title section-customer"><i class="fas fa-map-marked-alt"></i> Location &
+                                GPS</div>
+                            <div class="row g-3">
+                                <div class="col-md-8">
+                                    <label class="form-label">Full Address *</label>
+                                    <textarea name="address" class="form-control" rows="2"
+                                        placeholder="Street, Door No, etc." required></textarea>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">PIN Code *</label>
+                                    <input type="text" name="pincode" class="form-control" placeholder="6-digit"
+                                        required pattern="[0-9]{6}">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Select State *</label>
+                                    <select name="state" id="custStateDropdown" class="form-select cust-focus" required>
+                                        <option value="">-- SELECT STATE --</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Select District *</label>
+                                    <select name="district" id="custDistrictDropdown" class="form-select cust-focus"
+                                        required>
+                                        <option value="">-- SELECT DISTRICT --</option>
+                                    </select>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label">Nearby Landmark *</label>
+                                    <input type="text" name="landmark" class="form-control"
+                                        placeholder="e.g. Near Big Temple" required>
+                                </div>
+                                <div class="col-12 mt-4">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <label class="form-label mb-0">Select Exact Location on Map</label>
+                                        <button type="button" class="gps-btn" onclick="getCurrentLocation()">
+                                            <i class="fas fa-location-arrow me-1"></i> Detect Current GPS
+                                        </button>
+                                    </div>
+                                    <input type="hidden" name="gps" id="cust-gps">
+                                    <input type="hidden" name="coordinates" id="cust-coords">
+                                    <div id="map"></div>
+                                </div>
+                            </div>
+
+                            <div class="mt-5">
+                                <button type="submit" class="btn-signup btn-customer" id="custSubmitBtn">Create Customer
+                                    Account</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- DEALER PANE (EXACT REPLICATION) -->
+                <div class="tab-pane fade" id="dealer-pane" role="tabpanel">
+                    <div class="pane-header header-dealer">
+                        <i class="fas fa-handshake"></i>
+                        <h2>Grow with V-VARMA</h2>
+                        <p class="mb-0 opacity-75">Join our network of elite dealers and scale your business.</p>
+                    </div>
+                    <div class="pane-body">
+                        <form id="dealerRegForm" class="needs-validation" novalidate>
+                            <div class="section-title section-danger fw-bold">
+                                <i class="fas fa-exclamation-circle me-2"></i> REQUIRED LOCATION DETAILS (NEW)
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <label class="form-label">Select State *</label>
+                                    <select name="state" id="stateDropdown" class="form-select dealer-focus" required>
+                                        <option value="">-- SELECT STATE --</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Select District *</label>
+                                    <select name="district" id="districtDropdown" class="form-select dealer-focus"
+                                        required>
+                                        <option value="">-- SELECT DISTRICT --</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Landmark / Nearby Area *</label>
+                                    <input type="text" name="nearbyArea" class="form-control dealer-focus"
+                                        placeholder="e.g. Near New Bus Stand" required>
+                                </div>
+                            </div>
+
+                            <div class="section-title section-dealer mt-4">
+                                <i class="fas fa-user-circle"></i> Personal Information
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Full Name</label>
+                                    <input type="text" name="name" class="form-control dealer-focus"
+                                        placeholder="Enter your full name" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Mobile Number</label>
+                                    <input type="tel" name="mobile" class="form-control dealer-focus"
+                                        placeholder="10-digit mobile number" required pattern="[0-9]{10}">
+                                </div>
+                                <div class="col-md-12">
+                                    <label class="form-label">Email Address</label>
+                                    <input type="email" name="email" class="form-control dealer-focus"
+                                        placeholder="example@email.com" required>
+                                </div>
+                            </div>
+
+                            <div class="section-title section-dealer mt-5">
+                                <i class="fas fa-store"></i> Shop & Business Details
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-8">
+                                    <label class="form-label">Shop/Business Name</label>
+                                    <input type="text" name="shopName" class="form-control dealer-focus"
+                                        placeholder="Legal business name" required>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">GST Number (Optional)</label>
+                                    <input type="text" name="gstNumber" class="form-control dealer-focus"
+                                        placeholder="22AAAAA0000A1Z5">
+                                </div>
+                                <div class="col-md-12">
+                                    <label class="form-label">Detailed Address</label>
+                                    <textarea name="address" class="form-control dealer-focus" rows="2"
+                                        placeholder="Street name, Building No, etc." required></textarea>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Main Area / Locality</label>
+                                    <input type="text" name="area" class="form-control dealer-focus"
+                                        placeholder="e.g. T.Nagar" required>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">City / Town</label>
+                                    <input type="text" name="city" class="form-control dealer-focus"
+                                        placeholder="e.g. Chennai" required>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Pincode</label>
+                                    <input type="text" name="pincode" class="form-control dealer-focus"
+                                        placeholder="6-digit pincode" required pattern="[0-9]{6}">
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label">Official Google Maps Link</label>
+                                    <div class="input-group">
+                                        <input type="text" name="mapsUrl" id="mapsUrl" class="form-control dealer-focus"
+                                            placeholder="Paste your Google Maps link here...">
+                                        <button class="btn btn-danger px-4" type="button" onclick="findOnMaps()"><i
+                                                class="fas fa-map-marker-alt me-1"></i> Find on Maps</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="section-title section-dealer mt-5">
+                                <i class="fas fa-id-card"></i> Identification & Documents
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-12">
+                                    <label class="form-label">Upload Aadhar/PAN/Shop License</label>
+                                    <div class="upload-area upload-dealer"
+                                        onclick="document.getElementById('dealerIdProofInput').click()">
+                                        <i class="fas fa-cloud-upload-alt fs-1 text-muted mb-3 d-block"></i>
+                                        <h6 class="mb-1 fw-bold text-dark" id="dealerUploadText">Click to upload
+                                            document</h6>
+                                        <p class="text-muted small mb-0">PDF, JPG or PNG (Max 5MB)</p>
+                                        <input type="file" id="dealerIdProofInput" accept="image/*,application/pdf"
+                                            style="display:none;" onchange="handleDealerFile(this)">
+                                        <input type="hidden" name="idProof" id="dealerIdProofBase64" required>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="alert alert-info border-0 shadow-sm rounded-4 small p-3 mt-4">
+                                <i class="fas fa-info-circle me-2"></i> After submission, our team will review your
+                                application within 24-48 hours. Once approved, you will receive login credentials via
+                                SMS/Email.
+                            </div>
+
+                            <div class="mt-5">
+                                <button type="submit" class="btn-signup btn-dealer" id="dealerSubmitBtn">
+                                    <i class="fas fa-paper-plane me-2"></i>SUBMIT REGISTRATION REQUEST
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- TECHNICIAN PANE -->
+                <div class="tab-pane fade" id="tech-pane" role="tabpanel">
+                    <div class="pane-header header-tech">
+                        <i class="fas fa-tools"></i>
+                        <h2>Technician Hub</h2>
+                        <p class="mb-0 opacity-75">Work with V-VARMA and grow your skills professionally.</p>
+                    </div>
+                    <div class="pane-body">
+                        <form id="techSignupForm">
+                            <div class="section-title section-tech"><i class="fas fa-user-cog"></i> Profile Details
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Full Name *</label>
+                                    <input type="text" name="name" class="form-control tech-focus" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Mobile Number *</label>
+                                    <input type="tel" name="mobile" class="form-control tech-focus" required
+                                        pattern="[0-9]{10}">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Skills / Specialization *</label>
+                                    <input type="text" name="skills" class="form-control tech-focus"
+                                        placeholder="e.g. Electrician, RO Service" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Experience (Years)</label>
+                                    <input type="number" name="experience" class="form-control tech-focus" min="0">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Email (Optional)</label>
+                                    <input type="email" name="email" class="form-control tech-focus">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Date of Birth</label>
+                                    <input type="date" name="dob" class="form-control tech-focus">
+                                </div>
+                            </div>
+
+                            <div class="section-title section-tech mt-5"><i class="fas fa-map-pin"></i> Work Location
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <label class="form-label">State *</label>
+                                    <select name="state" id="techStateDropdown" class="form-select tech-focus" required>
+                                        <option value="">-- SELECT STATE --</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">District *</label>
+                                    <select name="district" id="techDistrictDropdown" class="form-select tech-focus"
+                                        required>
+                                        <option value="">-- SELECT DISTRICT --</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Area / Town *</label>
+                                    <input type="text" name="area" class="form-control tech-focus" required>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label">Residential Address *</label>
+                                    <textarea name="address" class="form-control tech-focus" rows="2"
+                                        required></textarea>
+                                </div>
+                            </div>
+
+                            <div class="section-title section-tech mt-5"><i class="fas fa-id-badge"></i> Verification
+                            </div>
+                            <div class="upload-area upload-tech"
+                                onclick="document.getElementById('techIdProofInput').click()">
+                                <i class="fas fa-id-card fs-1 text-muted mb-3 d-block"></i>
+                                <h6 class="mb-1 fw-bold text-dark" id="techUploadText">Click to upload identity proof
+                                </h6>
+                                <p class="text-muted small mb-0">Aadhar or License (Max 5MB)</p>
+                                <input type="file" id="techIdProofInput" accept="image/*,application/pdf"
+                                    style="display:none;" onchange="handleTechFile(this)">
+                                <input type="hidden" name="idProof" id="techIdProofBase64" required>
+                            </div>
+
+                            <div class="mt-5">
+                                <button type="submit" class="btn-signup btn-tech" id="techSubmitBtn">Submit Technician
+                                    Application</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        let map, marker;
+
+        // ── GAS-SAFE RESILIENT INITIALIZATION ──────────────────────────────
+        // DOMContentLoaded is UNRELIABLE inside Google Apps Script iframe sandbox.
+        // google.script.run may not be injected yet when DOMContentLoaded fires.
+        // We use a triple-init pattern (immediate + window.onload + setTimeout)
+        // with a guard flag to ensure initialization happens exactly once.
+        var _regPageInited = false;
+        var _dropdownsLoaded = false;
+
+        function initSignupPage() {
+            if (_regPageInited) return;
+            _regPageInited = true;
+
+            console.log('[Registration] Initializing page (resilient init)...');
+
+            // 1. Initialize Map
+            initMap();
+
+            // 2. Load Dropdowns (with GAS readiness check)
+            loadDropdowns();
+
+            // 3. Attach form submission handlers
+            var forms = [
+                { id: 'customerSignupForm', btn: 'custSubmitBtn', func: 'saveCustomerRegistration', showPass: true },
+                { id: 'dealerRegForm', btn: 'dealerSubmitBtn', func: 'saveDealerRegistration', showPass: false },
+                { id: 'techSignupForm', btn: 'techSubmitBtn', func: 'saveTechnician', showPass: false }
+            ];
+
+            forms.forEach(function(f) {
+                var el = document.getElementById(f.id);
+                if (el) {
+                    el.onsubmit = function (e) {
+                        e.preventDefault();
+                        submitForm(this, f.btn, f.func, f.showPass);
+                    };
+                }
+            });
+
+            // 4. Handle tab query parameter
+            try {
+                var params = new URLSearchParams(window.location.search);
+                var tab = params.get('tab');
+                if (tab === 'dealer') {
+                    new bootstrap.Tab(document.querySelector('#dealer-tab')).show();
+                } else if (tab === 'tech') {
+                    new bootstrap.Tab(document.querySelector('#tech-tab')).show();
+                } else {
+                    updateCardTheme('customer');
+                }
+            } catch(e) { console.warn('[Registration] Tab param error:', e); }
+
+            // 5. Tab Change Listener
+            document.querySelectorAll('button[data-bs-toggle="tab"]').forEach(function(el) {
+                el.addEventListener('shown.bs.tab', function(e) {
+                    var theme = e.target.id.split('-')[0];
+                    updateCardTheme(theme);
+                    if (map) map.invalidateSize();
+                });
+            });
+
+            // 6. Handle hash-based tab selection
+            try {
+                var hash = window.location.hash;
+                if (hash) {
+                    var tabEl = document.querySelector('.nav-link[data-bs-target="' + hash + '"]');
+                    if (tabEl) bootstrap.Tab.getOrCreateInstance(tabEl).show();
+                }
+            } catch(e) { console.warn('[Registration] Hash tab error:', e); }
+        }
+
+        // TRIPLE-INIT PATTERN: ensures init runs regardless of GAS iframe timing
+        // Attempt 1: immediate execution (works if DOM is already ready)
+        try { initSignupPage(); } catch(e) { console.log('[Registration] Immediate init deferred:', e.message); }
+
+        // Attempt 2: DOMContentLoaded (standard but unreliable in GAS)
+        document.addEventListener('DOMContentLoaded', function() { initSignupPage(); });
+
+        // Attempt 3: window.onload (GAS fires this reliably after iframe setup)
+        window.addEventListener('load', function() { initSignupPage(); });
+
+        // Attempt 4: Safety net timer (catches all edge cases)
+        setTimeout(function() { initSignupPage(); }, 800);
+
+        function updateCardTheme(theme) {
+            var card = document.querySelector('.signup-card');
+            if (card) {
+                card.classList.remove('theme-customer', 'theme-dealer', 'theme-tech');
+                card.classList.add('theme-' + theme);
+            }
+        }
+
+        function initMap() {
+            try {
+                map = L.map('map').setView([13.0827, 80.2707], 13);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap'
+                }).addTo(map);
+                marker = L.marker([13.0827, 80.2707], { draggable: true }).addTo(map);
+                marker.on('dragend', function (e) { updateCoords(marker.getLatLng().lat, marker.getLatLng().lng); });
+                map.on('click', function (e) { marker.setLatLng(e.latlng); updateCoords(e.latlng.lat, e.latlng.lng); });
+            } catch (err) {
+                console.error('[Map] Initialization failed:', err);
+            }
+        }
+
+        function updateCoords(lat, lng) {
+            var gpsEl = document.getElementById('cust-gps');
+            var coordsEl = document.getElementById('cust-coords');
+            if (coordsEl) coordsEl.value = lat + ',' + lng;
+            if (gpsEl) gpsEl.value = 'https://www.google.com/maps?q=' + lat + ',' + lng;
+        }
+
+        function getCurrentLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(function(pos) {
+                    var lat = pos.coords.latitude, lng = pos.coords.longitude;
+                    if (map) {
+                        map.setView([lat, lng], 16);
+                        if (marker) marker.setLatLng([lat, lng]);
+                        updateCoords(lat, lng);
+                    }
+                    Swal.fire({ title: 'Location Captured!', icon: 'success', toast: true, position: 'top-end', timer: 2000 });
+                }, function() { Swal.fire('GPS Error', 'Please select manually on map.', 'warning'); });
+            }
+        }
+
+        function findOnMaps() { window.open('https://www.google.com/maps', '_blank'); }
+
+        // ── DROPDOWN LOADING WITH RETRY & GAS READINESS CHECK ──────────────
+        function loadDropdowns() {
+            if (_dropdownsLoaded) return;
+            console.log('[Dropdowns] Requesting options from server...');
+
+            // 1. Attach onchange listeners for state→district cascading (all 3 tabs)
+            var stateMappings = [
+                { stateId: 'stateDropdown', distId: 'districtDropdown' },
+                { stateId: 'techStateDropdown', distId: 'techDistrictDropdown' },
+                { stateId: 'custStateDropdown', distId: 'custDistrictDropdown' }
+            ];
+
+            stateMappings.forEach(function(mapping) {
+                var el = document.getElementById(mapping.stateId);
+                var distEl = document.getElementById(mapping.distId);
+                if (el) {
+                    el.onchange = function () { loadDistricts(this.value, mapping.distId); };
+                }
+                if (distEl) {
+                    distEl.disabled = true;
+                }
+            });
+
+            // 2. Check if google.script.run is available
+            if (typeof google === 'undefined' || !google.script || !google.script.run) {
+                console.warn('[Dropdowns] google.script.run not available yet, retrying in 500ms...');
+                setTimeout(loadDropdowns, 500);
+                return;
+            }
+
+            // 3. Mark as loaded to prevent duplicate API calls
+            _dropdownsLoaded = true;
+
+            // 4. Populate defaults immediately as fallback (user sees options instantly)
+            var defaults = ['Tamil Nadu', 'Andhra Pradesh', 'Karnataka', 'Kerala', 'Telangana'];
+
+            // 5. Call backend API with robust error handling
+            try {
+                google.script.run
+                    .withFailureHandler(function(err) {
+                        console.error('[Dropdowns] API FAILURE:', err);
+                        // Populate with defaults on failure
+                        populateStateDropdowns(defaults);
+                    })
+                    .withSuccessHandler(function(res) {
+                        console.log('[Dropdowns] Server response:', JSON.stringify(res).substring(0, 500));
+
+                        var states = [];
+                        if (res && res.success && res.data) {
+                            states = res.data.State || res.data.state || res.data.STATE || res.data.States || res.data.states || [];
+                        }
+
+                        if (!states || states.length === 0) {
+                            console.warn('[Dropdowns] No states in response, using defaults.');
+                            states = defaults;
+                        }
+
+                        console.log('[Dropdowns] Final states list (' + states.length + '):', states);
+                        populateStateDropdowns(states);
+                    })
+                    .getDropdownOptions();
+            } catch (e) {
+                console.error('[Dropdowns] Exception calling getDropdownOptions:', e);
+                _dropdownsLoaded = false; // Allow retry
+                populateStateDropdowns(defaults);
+            }
+        }
+
+        // Helper: populate all three state dropdowns at once
+        function populateStateDropdowns(states) {
+            var dropdownIds = ['stateDropdown', 'techStateDropdown', 'custStateDropdown'];
+            dropdownIds.forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el) {
+                    el.innerHTML = '<option value="">-- SELECT STATE --</option>';
+                    states.forEach(function(s) {
+                        el.add(new Option(s, s));
+                    });
+                    console.log('[Dropdowns] Populated #' + id + ' with ' + states.length + ' states');
+                } else {
+                    console.warn('[Dropdowns] Element #' + id + ' not found in DOM');
+                }
+            });
+        }
+
+        function loadDistricts(state, targetId) {
+            var el = document.getElementById(targetId);
+            if (!el) return;
+
+            if (!state) {
+                el.innerHTML = '<option value="">-- SELECT DISTRICT --</option>';
+                el.disabled = true;
+                return;
+            }
+
+            el.innerHTML = '<option value="">-- LOADING... --</option>';
+            el.disabled = true;
+
+            // Check GAS availability before calling
+            if (typeof google === 'undefined' || !google.script || !google.script.run) {
+                console.error('[Dropdowns] google.script.run not available for district load');
+                el.innerHTML = '<option value="">-- RETRY --</option>';
+                return;
+            }
+
+            google.script.run
+                .withFailureHandler(function(err) {
+                    console.error('[Dropdowns] Error loading districts for ' + state + ':', err);
+                    el.innerHTML = '<option value="">-- ERROR LOADING --</option>';
+                    el.disabled = false;
+                })
+                .withSuccessHandler(function(districts) {
+                    console.log('[Dropdowns] Districts for ' + state + ':', districts);
+                    el.innerHTML = '<option value="">-- SELECT DISTRICT --</option>';
+                    if (districts && districts.length > 0) {
+                        districts.forEach(function(d) { el.add(new Option(d, d)); });
+                        el.disabled = false;
+                    } else {
+                        el.add(new Option('-- NO DISTRICTS FOUND --', ''));
+                    }
+                })
+                .getDropdownData('District', state);
+        }
+
+        function handleDealerFile(input) { handleFile(input, 'dealerIdProofBase64', 'dealerUploadText'); }
+        function handleTechFile(input) { handleFile(input, 'techIdProofBase64', 'techUploadText'); }
+
+        function handleFile(input, hiddenId, textId) {
+            var file = input.files[0]; if (!file) return;
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                var hiddenEl = document.getElementById(hiddenId);
+                var textEl = document.getElementById(textId);
+                if (hiddenEl) hiddenEl.value = e.target.result;
+                if (textEl) textEl.innerText = 'Selected: ' + file.name;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function submitForm(form, btnId, func, showPass) {
+            var btn = document.getElementById(btnId);
+            if (!btn) return;
+
+            var originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Processing...';
+
+            var data = Object.fromEntries(new FormData(form).entries());
+            google.script.run.withSuccessHandler(function(res) {
+                if (res.success) {
+                    var html = 'Your registration has been submitted successfully.';
+                    if (showPass) {
+                        var namePart = String(data.name || '').substring(0, 4).replace(/\s/g, '');
+                        var mobilePart = String(data.mobile || '').slice(-4);
+                        var pass = namePart + '@' + mobilePart;
+                        html = 'Welcome aboard!<br><br><b>Login Credentials:</b><br>User ID: ' + data.mobile + '<br>Password: ' + pass;
+                    } else {
+                        html += '<br><br>Our team will review your application and notify you once approved.';
+                    }
+                    Swal.fire({ title: 'Registration Successful!', html: html, icon: 'success' }).then(function() {
+                        var urlParams = new URLSearchParams(window.location.search);
+                        if (urlParams.get('redirect') === 'cart') {
+                            window.location.href = '<?= appUrl ?>?page=cart';
+                        } else {
+                            window.location.href = '<?= appUrl ?>?page=login';
+                        }
+                    });
+                } else {
+                    Swal.fire('Registration Error', res.message, 'error');
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                }
+            }).withFailureHandler(function(err) {
+                console.error('[Registration] Submission failed:', err);
+                Swal.fire('Server Error', 'Failed to submit registration. Please try again.', 'error');
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            })[func](data);
+        }
+    </script>
+</body>
+
+</html>

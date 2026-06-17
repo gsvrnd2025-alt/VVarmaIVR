@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base target="_top">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register Complaint - V-VARMA</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <?!= include('shared_styles'); ?>
+</head>
+<body>
+    <?!= include('navbar'); ?>
+
+    <div id="complaint" class="section funky-page">
+        <div class="funky-bg-blur"></div>
+        <div class="floating-symbols" id="symbols-complaint-fixed"></div>
+        <div class="container-fluid">
+            <div class="funky-card">
+                <h2><i class="fas fa-tools me-3"></i>Complaint Registration</h2>
+                <p class="text-center text-muted mb-4">Quick service for your V-VARMA product</p>
+                <form id="complaintForm" onsubmit="registerComplaint(event)">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label required">Warranty ID *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-id-badge"></i></span>
+                                <input type="text" class="form-control" id="complaintWarrantyId" required placeholder="V-23-0045-201">
+                                <button class="btn btn-outline-orange" type="button" onclick="openQRScanner('complaintWarrantyId')">
+                                    <i class="fas fa-qrcode"></i> Scan
+                                </button>
+                            </div>
+                            <small class="text-muted">Enter your warranty ID. This is mandatory for complaint registration.</small>
+                            <div class="mt-2">
+                                <button type="button" class="btn btn-sm btn-outline-orange" onclick="verifyWarranty()">
+                                    <i class="fas fa-check me-1"></i>Verify Warranty
+                                </button>
+                                <span id="warrantyStatus" class="ms-2"></span>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label required">Customer Name *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-user"></i></span>
+                                <input type="text" class="form-control" id="complaintCustomerName" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label required">Mobile Number *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-mobile-alt"></i></span>
+                                <input type="tel" class="form-control" id="complaintMobile" required pattern="[0-9]{10}" placeholder="10 digit number" maxlength="10">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Email</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-envelope"></i></span>
+                                <input type="email" class="form-control" id="complaintEmail" placeholder="optional@example.com">
+                            </div>
+                            <small class="text-muted">For sending complaint status updates</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label required">Product Model *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-cube"></i></span>
+                                <select class="form-select" id="complaintProductModel" required>
+                                    <option value="">Select Model</option>
+                                    <!-- Models will be loaded dynamically -->
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label required">Issue Type *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-exclamation-circle"></i></span>
+                                <select class="form-select" id="issueType" required>
+                                    <option value="">Select Issue</option>
+                                    <!-- Issues will be loaded dynamically -->
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label required">Problem Description *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-comment-dots"></i></span>
+                                <textarea class="form-control" id="problemDesc" rows="3" required placeholder="Describe the problem in detail..."></textarea>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label required">Service Address *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-map-marker-alt"></i></span>
+                                <textarea class="form-control" id="complaintAddress" rows="2" required placeholder="Full address where service is required"></textarea>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label required">Area *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-city"></i></span>
+                                <input type="text" class="form-control" id="complaintArea" required placeholder="Area/Locality">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Landmark</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-map-signs"></i></span>
+                                <input type="text" class="form-control" id="complaintLandmark" placeholder="Nearby landmark">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label required">Pincode *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-mail-bulk"></i></span>
+                                <input type="text" class="form-control" id="complaintPincode" required pattern="[0-9]{6}" placeholder="6 digit pincode" maxlength="6">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label required">Preferred Service Date *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-calendar-day"></i></span>
+                                <input type="date" class="form-control" id="serviceDate" required>
+                            </div>
+                            <small class="text-muted">Service can be scheduled only after 2 days from today</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label required">Preferred Time Slot *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-clock"></i></span>
+                                <select class="form-select" id="timeSlot" required>
+                                    <option value="">Select Time</option>
+                                    <option value="9AM-12PM">9:00 AM - 12:00 PM</option>
+                                    <option value="12PM-3PM">12:00 PM - 3:00 PM</option>
+                                    <option value="3PM-6PM">3:00 PM - 6:00 PM</option>
+                                    <option value="6PM-8PM">6:00 PM - 8:00 PM</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" required id="complaintTerms">
+                                <label class="form-check-label">
+                                    I agree to the terms and conditions and confirm that the provided information is correct.
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-orange px-5" id="complaintSubmitBtn">
+                                <span id="complaintBtnText"><i class="fas fa-paper-plane me-2"></i>Register Complaint</span>
+                                <span class="spinner-border spinner-border-sm" id="complaintSpinner" style="display: none;"></span>
+                            </button>
+                            <a href="<?= appUrl ?>?page=home" class="btn btn-secondary">
+                                <i class="fas fa-times me-2"></i>Cancel
+                            </a>
+                        </div>
+                    </div>
+                </form>
+                <div id="complaintResult" class="mt-3"></div>
+            </div>
+        </div>
+    </div>
+
+    <?!= include('floating_icons'); ?>
+    <?!= include('chat_widget'); ?>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <?!= include('shared_scripts.js'); ?>
+</body>
+</html>

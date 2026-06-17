@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base target="_top">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Home - V-VARMA</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <?!= include('shared_styles'); ?>
+    <style>
+        .brands-logos-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            align-items: center;
+            justify-content: center;
+        }
+        @media (min-width: 576px) {
+            .brands-logos-grid {
+                grid-template-columns: repeat(6, 1fr);
+            }
+        }
+        @media (min-width: 992px) {
+            .brands-logos-grid {
+                grid-template-columns: repeat(8, 1fr); /* 8 columns on desktop */
+                gap: 20px;
+            }
+        }
+        .brand-logo-item {
+            background: #fff;
+            border-radius: 8px;
+            padding: 8px;
+            height: 65px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .brand-logo-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        /* News Ticker Scrolling keyframe animation */
+        @keyframes ticker-scroll-anim {
+            0% { transform: translate3d(0, 0, 0); }
+            100% { transform: translate3d(-100%, 0, 0); }
+        }
+        .ticker-scroll:hover {
+            animation-play-state: paused !important;
+        }
+    </style>
+</head>
+<body>
+    <?!= include('navbar'); ?>
+
+    <!-- Scrolling News Ticker Banner -->
+    <div id="public-ticker-banner" class="w-100 py-2 border-bottom" style="background: #3d2b1f; display: none; overflow: hidden; white-space: nowrap; position: relative; z-index: 1000; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+        <div class="container d-flex align-items-center">
+            <div class="ticker-label bg-orange text-white px-3 py-1 rounded-pill small fw-bold me-3 shadow-sm animate__animated animate__pulse animate__infinite" style="font-size: 0.75rem; flex-shrink: 0; letter-spacing: 0.5px;">
+                <i class="fas fa-bullhorn me-1"></i> NEWS UPDATE
+            </div>
+            <div class="ticker-wrapper" style="overflow: hidden; width: 100%; cursor: pointer;" onclick="handleTickerClick()">
+                <div id="ticker-scroll-text" class="ticker-scroll" style="display: inline-block; padding-left: 100%; animation: ticker-scroll-anim 25s linear infinite; color: white; font-weight: 600; font-size: 0.9rem;">
+                    <!-- Notification text loaded dynamically -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <main class="container-fluid p-3" id="mainContainer">
+        <!-- Home Section -->
+        <div id="home" class="section">
+            <div id="publicCarouselContainer" class="row mb-5" style="display: none; width: 100%; margin: 0 auto;">
+                <!-- Dynamically loaded carousel will appear here -->
+            </div>
+
+            <!-- New Rotating Catalog Carousel -->
+            <div id="catalogRotatingContainer" class="container mt-4 mb-5" style="display:none;">
+                <div class="card border-0 shadow-sm rounded-4 overflow-hidden mb-3">
+                    <div class="card-header bg-brown text-white py-3 px-4 d-flex align-items-center justify-content-between">
+                        <h5 class="mb-0 fw-bold"><i class="fas fa-bullhorn text-orange me-2"></i>Product Highlights</h5>
+                        <span class="badge bg-orange rounded-pill px-3">Live Updates</span>
+                    </div>
+                </div>
+                <div id="rotatingCatalogRow" class="row g-3 row-cols-1 row-cols-sm-2 row-cols-lg-4">
+                    <!-- Dynamic promo items will be injected here -->
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-12 text-center pb-3">
+                    <p class="lead fw-bold text-brown" style="letter-spacing: 1px;">Warranty & Complaint Management System</p>
+                </div>
+            </div>
+
+            <div class="service-cards-wrapper">
+                <div class="row g-4">
+                    <div class="col-md-4">
+                        <div class="card warranty-card h-100 shadow-sm border-0">
+                            <div class="card-body p-4">
+                                <h5 class="service-card-title text-orange">
+                                    <i class="fas fa-certificate me-2"></i>Warranty Registration
+                                </h5>
+                                <p class="service-card-desc">Register for warranty coverage.</p>
+                                <ul class="service-feature-list">
+                                    <li><i class="fas fa-check-circle text-success"></i>Warranty ID</li>
+                                    <li><i class="fas fa-check-circle text-success"></i>Easy claim</li>
+                                    <li><i class="fas fa-check-circle text-success"></i>12 months warranty</li>
+                                </ul>
+                                <a href="<?= appUrl ?>?page=service_portal&tab=warranty" class="btn btn-orange w-100 py-2 fw-bold text-uppercase">
+                                    Register Now
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-4">
+                        <div class="card complaint-card h-100 shadow-sm border-0">
+                            <div class="card-body p-4">
+                                <h5 class="service-card-title text-brown">
+                                    <i class="fas fa-cog me-2"></i>Complaint Registration
+                                </h5>
+                                <p class="service-card-desc">Register a complaint for your controller.</p>
+                                <ul class="service-feature-list">
+                                    <li><i class="fas fa-check-circle text-success"></i>Quick service</li>
+                                    <li><i class="fas fa-check-circle text-success"></i>Status tracking</li>
+                                    <li><i class="fas fa-check-circle text-success"></i>Notifications</li>
+                                </ul>
+                                <a href="<?= appUrl ?>?page=service_portal&tab=complaint" class="btn btn-brown w-100 py-2 fw-bold text-uppercase">
+                                    Register Complaint
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-4">
+                        <div class="card tracking-card h-100 shadow-sm border-0">
+                            <div class="card-body p-4">
+                                <h5 class="service-card-title text-blue">
+                                    <i class="fas fa-search me-2"></i>Track Warranty/Complaint
+                                </h5>
+                                <p class="service-card-desc">Check your warranty status and details.</p>
+                                <ul class="service-feature-list">
+                                    <li><i class="fas fa-check-circle text-success"></i>Track status</li>
+                                    <li><i class="fas fa-check-circle text-success"></i>Product details</li>
+                                    <li><i class="fas fa-check-circle text-success"></i>History</li>
+                                </ul>
+                                <a href="<?= appUrl ?>?page=tracking" class="btn btn-track w-100 py-2 fw-bold text-uppercase">
+                                    Track Now
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row mt-4 mb-5">
+                <div class="col-12 px-2">
+                    <div class="card border-0 shadow-sm rounded-4 overflow-hidden mb-3">
+                        <div class="card-header bg-brown text-white py-3 px-4 d-flex align-items-center justify-content-between">
+                            <h5 class="mb-0 fw-bold"><i class="fas fa-boxes text-orange me-2"></i>Available Product Models</h5>
+                            <span class="badge bg-orange rounded-pill px-3">Active Models</span>
+                        </div>
+                    </div>
+                    <div class="w-100">
+                        <div class="row justify-content-center" id="productModelsGrid">
+                            <!-- Will be populated by JavaScript -->
+                            <div class="text-center p-5 w-100">
+                                <div class="spinner-border text-orange" role="status"></div>
+                                <p class="mt-2">Loading products...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Home Page Dynamic Banners Matrix (2x4) -->
+            <div id="homePageBannerMatrixContainer" class="row mt-4 mb-4" style="display: none;">
+                <div class="col-md-12">
+                    <div class="card border-0 shadow-sm rounded-4 overflow-hidden" style="background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px);">
+                        <div class="card-header bg-brown text-white py-3 px-4 d-flex align-items-center justify-content-between">
+                            <h5 class="mb-0 fw-bold"><i class="fas fa-images text-orange me-2"></i>Featured Highlights</h5>
+                            <span class="badge bg-orange rounded-pill px-3">Latest Offers</span>
+                        </div>
+                        <div class="card-body p-4">
+                            <div id="homePageBannerMatrix" class="row g-4 justify-content-center row-cols-1 row-cols-md-2 row-cols-lg-4">
+                                <!-- Banner grid items injected here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Home Page Dynamic YouTube Carousel -->
+            <div id="homePageYoutubeCarouselContainer" class="row mt-4 mb-4" style="display: none;">
+                <div class="col-md-12">
+                    <div class="card border-0 shadow-sm rounded-4 overflow-hidden" style="background: #111;">
+                        <div class="card-header bg-black text-white py-3 px-4 border-bottom border-secondary d-flex align-items-center justify-content-between">
+                            <h5 class="mb-0 fw-bold"><i class="fab fa-youtube text-danger me-2"></i>Video Showcase</h5>
+                            <span class="badge bg-danger rounded-pill px-3">Play All</span>
+                        </div>
+                        <!-- Container for continuous scrolling -->
+                        <div class="card-body p-0 overflow-hidden position-relative" id="youtubeScrollWrapper">
+                            <div id="homePageYoutubeCarousel" class="d-flex" style="width: max-content;">
+                                <!-- YouTube items injected here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dynamic Product Videos Showcase -->
+            <div id="productVideosShowcaseContainer" class="row mt-4 mb-4" style="display: none;">
+                <div class="col-md-12">
+                    <div class="card border-0 shadow-sm rounded-4 overflow-hidden" style="background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px);">
+                        <div class="card-header bg-brown text-white py-3 px-4 d-flex align-items-center justify-content-between">
+                            <h5 class="mb-0 fw-bold"><i class="fab fa-youtube text-orange me-2"></i>Product Demonstration Videos</h5>
+                            <span class="badge bg-orange rounded-pill px-3">Featured Videos</span>
+                        </div>
+                        <div class="card-body p-4">
+                            <div id="productVideosGrid" class="row g-4 justify-content-center">
+                                <!-- Dynamically loaded embedded videos will appear here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dynamic V-VARMA Network Stats & Partners section -->
+            <div id="networkStatsContainer" class="row mt-4 mb-4" style="display: none;">
+                <div class="col-md-12">
+                    <div class="card border-0 shadow-lg rounded-4 overflow-hidden" style="background: linear-gradient(135deg, #fdfbf7 0%, #f5efe6 100%);">
+                        <div class="card-body p-4 p-md-5 text-center">
+                            <span class="text-orange fw-bold small uppercase tracking-wider mb-2 d-block"><i class="fas fa-heart me-1"></i>OUR INCREDIBLE JOURNEY</span>
+                            <h2 class="fw-bold text-brown mb-4">V-VARMA at a Glance</h2>
+                            
+                            <!-- 4-Column Stats Grid -->
+                            <div class="row g-4 mb-5 mt-2">
+                                <div class="col-6 col-md-3">
+                                    <div class="p-3 bg-white rounded-4 shadow-sm h-100 animate__animated animate__zoomIn" style="border-bottom: 4px solid #fd7e14; transition: transform 0.3s;" onmouseover="this.style.transform='translateY(-5px)'" onmouseout="this.style.transform='none'">
+                                        <div class="text-orange fs-2 mb-2"><i class="fas fa-tools"></i></div>
+                                        <h3 class="fw-extrabold text-brown mb-1 counter-value" id="val-installs">0+</h3>
+                                        <div class="text-muted small uppercase fw-bold" style="font-size: 0.75rem;">Machines Installed</div>
+                                    </div>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <div class="p-3 bg-white rounded-4 shadow-sm h-100 animate__animated animate__zoomIn animate__delay-1s" style="border-bottom: 4px solid #fd7e14; transition: transform 0.3s;" onmouseover="this.style.transform='translateY(-5px)'" onmouseout="this.style.transform='none'">
+                                        <div class="text-orange fs-2 mb-2"><i class="fas fa-store"></i></div>
+                                        <h3 class="fw-extrabold text-brown mb-1 counter-value" id="val-dealers">0+</h3>
+                                        <div class="text-muted small uppercase fw-bold" style="font-size: 0.75rem;">Partner Dealers</div>
+                                    </div>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <div class="p-3 bg-white rounded-4 shadow-sm h-100 animate__animated animate__zoomIn animate__delay-2s" style="border-bottom: 4px solid #8B5A2B; transition: transform 0.3s;" onmouseover="this.style.transform='translateY(-5px)'" onmouseout="this.style.transform='none'">
+                                        <div class="text-orange fs-2 mb-2"><i class="fas fa-user-cog"></i></div>
+                                        <h3 class="fw-extrabold text-brown mb-1 counter-value" id="val-techs">0+</h3>
+                                        <div class="text-muted small uppercase fw-bold" style="font-size: 0.75rem;">Technicians</div>
+                                    </div>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <div class="p-3 bg-white rounded-4 shadow-sm h-100 animate__animated animate__zoomIn animate__delay-3s" style="border-bottom: 4px solid #8B5A2B; transition: transform 0.3s;" onmouseover="this.style.transform='translateY(-5px)'" onmouseout="this.style.transform='none'">
+                                        <div class="text-orange fs-2 mb-2"><i class="fas fa-map-marked-alt"></i></div>
+                                        <h3 class="fw-extrabold text-brown mb-1 counter-value" id="val-areas">0+</h3>
+                                        <div class="text-muted small uppercase fw-bold" style="font-size: 0.75rem;">Districts Covered</div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Brand Logos Carousel / Scroll -->
+                            <div id="brandsCarouselSection" style="display: none;" class="mb-5">
+                                <h6 class="text-brown fw-bold mb-3 small uppercase tracking-wider"><i class="fas fa-building me-1"></i>PROUD PARTNERS & TRUSTED BRAND CUSTOMERS</h6>
+                                <div class="brands-logos-grid py-3 px-4 bg-white rounded-4 shadow-sm" id="brandsLogosRow">
+                                    <!-- Dynamic brand logos will slide or grid here -->
+                                </div>
+                            </div>
+                            
+                            <!-- Service Areas Pills -->
+                            <div id="serviceAreasSection" style="display: none;">
+                                <h6 class="text-brown fw-bold mb-3 small uppercase tracking-wider"><i class="fas fa-route me-1"></i>OUR COMPREHENSIVE SERVICE REACH</h6>
+                                <div class="d-flex flex-wrap justify-content-center gap-2" id="serviceAreasRow">
+                                    <!-- Dynamic badges of Tamil Nadu districts -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row mt-4 mb-5">
+                <div class="col-md-8">
+                    <div class="card h-100">
+                        <div class="card-header bg-orange text-white">
+                            <h5 class="mb-0"><i class="fas fa-info-circle me-2"></i>About V-VARMA</h5>
+                        </div>
+                        <div class="card-body">
+                            <p>V-VARMA Water Level Controllers are designed with advanced technology to ensure efficient water management and pump protection. Our products are known for:</p>
+                            <ul class="list-unstyled">
+                                <li><i class="fas fa-shield-alt text-orange me-2"></i><strong>Reliability:</strong> Built with high-quality components</li>
+                                <li><i class="fas fa-leaf text-success me-2"></i><strong>Energy Efficiency:</strong> Eco-friendly models that save electricity</li>
+                                <li><i class="fas fa-lock text-primary me-2"></i><strong>Safety:</strong> Dry-run protection and automatic shut-off</li>
+                                <li><i class="fas fa-wrench text-secondary me-2"></i><strong>Easy Installation:</strong> User-friendly setup and operation</li>
+                            </ul>
+                            <p class="mt-3">All products come with 12 months warranty against manufacturing defects.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="customer-care-box h-100">
+                        <h5 class="text-brown fw-bold"><i class="fas fa-headset me-2"></i>Customer Care</h5>
+                        <p class="mb-2"><strong><i class="fas fa-phone-alt me-2 text-orange"></i>Customer Care:</strong> 9092610415</p>
+                        <p class="mb-2"><strong><i class="fas fa-envelope me-2 text-orange"></i>Email:</strong> vvarmacare.2021@gmail.com</p>
+                        <p class="mb-2"><strong><i class="fas fa-globe me-2 text-orange"></i>Website:</strong> www.gsvee.in</p>
+                        <p class="mb-3"><strong><i class="fas fa-comment-dots me-2 text-orange"></i>Complaint Portal:</strong> https://gsvee.tawk.help/</p>
+                        <hr>
+                        <p class="small text-muted mb-0">
+                            <i class="fas fa-clock me-1"></i> Support Hours: 9:00 AM - 6:00 PM (Mon-Sat)
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        function loadHomeSettings() {
+            console.log('[HOME] Initializing Home Page...');
+            
+            // Load scrolling public news ticker!
+            try {
+                loadPublicTicker();
+            } catch (tickerErr) {
+                console.error('[HOME] Ticker init error:', tickerErr);
+            }
+            
+            // 0. Load Admin Settings for animation timings
+            try {
+                google.script.run.withSuccessHandler(function(adminSettings) {
+                    window.ytScrollSpeed = parseInt(adminSettings.ytScrollSpeed) || 30;
+                    window.bannerTransition = parseInt(adminSettings.bannerTransition) || 4;
+                }).getAdminSettings();
+            } catch(e) {
+                window.ytScrollSpeed = 30;
+                window.bannerTransition = 4;
+            }
+
+            // 1. Load Configs
+            try {
+                google.script.run
+                    .withSuccessHandler(function(settings) {
+                        console.log('[HOME] Web Settings Loaded:', settings);
+                        if (settings && settings.site_logo && typeof syncSiteLogo === 'function') {
+                            syncSiteLogo(settings.site_logo);
+                        }
+                        window.bannerInterval = (parseInt(settings.banner_timing) || 8) * 1000;
+                        
+                        // Populate Dynamic Statistics & Partner Logos
+                        if (settings) {
+                            var installs = settings.installations_count || '';
+                            var dealers = settings.dealers_count || '';
+                            var techs = settings.technicians_count || '';
+                            var areasCount = settings.areas_count || '';
+                            var serviceAreas = settings.service_areas || '';
+                            var partnerLogos = settings.partner_logos || '[]';
+                            
+                            var hasStats = installs || dealers || techs || areasCount;
+                            
+                            if (hasStats) {
+                                document.getElementById('networkStatsContainer').style.display = 'block';
+                                if (installs) document.getElementById('val-installs').innerText = Number(installs).toLocaleString('en-IN') + '+';
+                                if (dealers) document.getElementById('val-dealers').innerText = Number(dealers).toLocaleString('en-IN') + '+';
+                                if (techs) document.getElementById('val-techs').innerText = Number(techs).toLocaleString('en-IN') + '+';
+                                if (areasCount) document.getElementById('val-areas').innerText = Number(areasCount).toLocaleString('en-IN') + '+';
+                            }
+                            
+                            // Partner brand logos
+                            if (typeof partnerLogos === 'string' && partnerLogos.trim().startsWith('[')) {
+                                try { partnerLogos = JSON.parse(partnerLogos); } catch(e) { partnerLogos = []; }
+                            }
+                            if (partnerLogos && Array.isArray(partnerLogos) && partnerLogos.length > 0) {
+                                document.getElementById('brandsCarouselSection').style.display = 'block';
+                                var logosHtml = '';
+                                partnerLogos.forEach(function(url) {
+                                    if (url && url.length > 10) {
+                                        logosHtml += '<div class="brand-logo-item"><img src="' + url + '" class="img-fluid animate__animated animate__fadeIn" style="max-height: 45px; max-width: 100%; object-fit: contain; filter: grayscale(10%) contrast(1.1); transition: filter 0.3s;" onmouseover="this.style.filter=\'none\'" onmouseout="this.style.filter=\'grayscale(10%) contrast(1.1)\'" onerror="this.parentNode.style.display=\'none\'"></div>';
+                                    }
+                                });
+                                document.getElementById('brandsLogosRow').innerHTML = logosHtml;
+                            }
+                            
+                            // Service Area Districts
+                            if (serviceAreas && serviceAreas.trim().length > 0) {
+                                document.getElementById('serviceAreasSection').style.display = 'block';
+                                var areasHtml = '';
+                                var dists = serviceAreas.split(',');
+                                dists.forEach(function(d) {
+                                    var cleanD = d.trim();
+                                    if (cleanD) {
+                                        areasHtml += '<span class="badge bg-white text-brown border shadow-sm px-3 py-2 rounded-pill animate__animated animate__fadeIn" style="font-size:0.85rem; font-weight:600;"><i class="fas fa-map-marker-alt text-orange me-1"></i>' + cleanD + '</span>';
+                                    }
+                                });
+                                document.getElementById('serviceAreasRow').innerHTML = areasHtml;
+                            }
+                        }
+                        
+                        loadPageData();
+                    })
+                    .withFailureHandler(function(err) {
+                        console.error('[HOME] Settings Load Failed:', err);
+                        window.bannerInterval = 8000;
+                        loadPageData();
+                    })
+                    .getWebSettings();
+            } catch (e) {
+                console.error('[HOME] Settings call error:', e);
+                window.bannerInterval = 8000;
+                loadPageData();
+            }
+        }
+ 
+        function loadPageData() {
+            console.log('[HOME] Loading page data components...');
+            
+            // 2. Load Hero Slides
+            try {
+                google.script.run
+                    .withSuccessHandler(function(res) {
+                        console.log('[HOME] Hero Slides Response:', res ? res.length : 'NULL');
+                        var activeSlides = (res || []).filter(function(s) {
+                            var status = (s.Status || s.status || '').toString().toLowerCase().trim();
+                            return status !== 'inactive' && status !== 'deleted' && status !== 'paused';
+                        });
+                        
+                        console.log('[HOME] Active Slides Found:', activeSlides.length);
+                        var interval = window.bannerInterval || 5000;
+                        
+                        if (activeSlides.length > 0) {
+                            renderCarousel(activeSlides, interval);
+                        } else {
+                            console.warn('[HOME] No slides in DB. Using fallbacks.');
+                            var fallbacks = [{
+                                Title: 'Reliable Water Level Controllers',
+                                Badge: 'V-VARMA EXCLUSIVE',
+                                Description: 'Smart automation for your home and industry.',
+                                ImageURL: 'https://img.freepik.com/free-photo/industrial-mechanics-working-together-factory_23-2149028424.jpg',
+                                Btn1Text: 'Explore Catalog', Btn1Url: 'catalog',
+                                Btn2Text: 'Register Now', Btn2Url: 'service_portal&tab=warranty'
+                            }];
+                            renderCarousel(fallbacks, 5000);
+                        }
+                    })
+                    .withFailureHandler(function(err) {
+                        console.error('[HOME] Hero Data Load Failed:', err);
+                    })
+                    .getData('heroSlides');
+            } catch (e) { console.error('[HOME] Hero call error:', e); }
+ 
+            // 3. Load Carousel (Rotating Catalog)
+            try {
+                google.script.run
+                    .withSuccessHandler(function(res) {
+                        var activeItems = (res || []).filter(function(s) {
+                            var status = (s.Status || s.status || '').toString().toLowerCase();
+                            var linkedId = String(s['Linked Product ID'] || s.linkedproductid || s.LinkedProductID || s.linkedId || '').trim();
+                            return status !== 'inactive' && status !== 'paused' && linkedId !== 'ABOUT_VARMA';
+                        });
+                        
+                        if (activeItems.length > 0) {
+                            renderRotatingCatalog(activeItems);
+                        } else {
+                            var fallbacks = [
+                                { ImageURL: 'https://img.freepik.com/free-photo/industrial-mechanics-working-together-factory_23-2149028424.jpg', Caption: 'Advanced Pump Controllers' },
+                                { ImageURL: 'https://img.freepik.com/free-photo/plumbing-professional-working-repairing-pipe_23-2150990664.jpg', Caption: 'Smart Home Solutions' }
+                            ];
+                            renderRotatingCatalog(fallbacks);
+                        }
+                    })
+                    .withFailureHandler(function(err) { console.error('[HOME] Catalog Load Failed:', err); })
+                    .getData('carousel');
+            } catch (e) { console.error('[HOME] Catalog call error:', e); }
+ 
+            // 4. Load Product Grid
+            try {
+                google.script.run
+                    .withSuccessHandler(function(res) {
+                        var activeProds = (res || []).filter(function(p) { return p.Status !== 'Inactive'; });
+                        window.homeProductsCache = activeProds;
+                        if (activeProds.length > 0) {
+                            renderProductGrid(activeProds.slice(0, 8));
+                            renderYouTubeShowcase(activeProds);
+                            renderHomeBannerMatrix(activeProds);
+                        } else {
+                            renderProductGrid([]);
+                            renderYouTubeShowcase([]);
+                            renderHomeBannerMatrix([]);
+                        }
+                    })
+                    .withFailureHandler(function(err) { console.error('[HOME] Product Load Failed:', err); })
+                    .getPublicCatalogProducts();
+            } catch (e) { console.error('[HOME] Product call error:', e); }
+        }
+
+        function renderYouTubeShowcase(products) {
+            var container = document.getElementById('productVideosShowcaseContainer');
+            var grid = document.getElementById('productVideosGrid');
+            if (!container || !grid) return;
+            
+            var html = '';
+            var count = 0;
+            
+            // Aggregate all videos from all products
+            var allVideos = [];
+            (products || []).forEach(function(p) {
+                var ytVal = p.YouTube || p.youtube || '';
+                var videoList = [];
+                if (typeof ytVal === 'string' && ytVal.trim().startsWith('[')) {
+                    try { videoList = JSON.parse(ytVal); } catch(e) {}
+                } else if (ytVal && ytVal.trim().length > 10) {
+                    videoList = [{ title: 'Product Demonstration', url: ytVal, color: '#fd7e14' }];
+                }
+                
+                if (videoList && Array.isArray(videoList)) {
+                    videoList.forEach(function(video) {
+                        var url = video.url || '';
+                        var videoId = '';
+                        var regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+                        var match = url.match(regExp);
+                        if (match && match[2].length === 11) {
+                            videoId = match[2];
+                        }
+                        
+                        if (videoId) {
+                            allVideos.push({
+                                videoId: videoId,
+                                title: video.title || p.ProductTitle || p.Name || 'Product Video',
+                                modelNo: p.ModelNo || p.modelno || '',
+                                color: video.color || '#fd7e14',
+                                size: video.size || '1.25rem'
+                            });
+                        }
+                    });
+                }
+            });
+            
+            var count = allVideos.length;
+            if (count === 0) {
+                container.style.display = 'none';
+                return;
+            }
+            
+            container.style.display = 'block';
+            
+            // Match the catalog page banner layout (shrunk by 5%)
+            var html = '';
+            allVideos.forEach(function(v) {
+                html += '<div class="col-12 mb-5 d-flex justify-content-center animate__animated animate__fadeIn">';
+                html += '  <div class="product-video-section" style="width: 95%; max-width: 630px; margin: 0 auto;">';
+                html += '    <h4 class="fw-bolder mb-3 text-center" style="font-size: ' + (v.size || '1.25rem') + '; color: ' + (v.color || '#fd7e14') + ';"><i class="fab fa-youtube me-2"></i>' + v.title + '</h4>';
+                html += '    <div class="ratio ratio-16x9 rounded-4 overflow-hidden shadow-sm">';
+                html += '      <iframe src="https://www.youtube.com/embed/' + v.videoId + '" title="' + v.title + '" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>';
+                html += '    </div>';
+                html += '    <p class="small text-muted mt-2 text-center"><i class="fab fa-youtube text-orange me-1"></i>Model: ' + v.modelNo + '</p>';
+                html += '  </div>';
+                html += '</div>';
+            });
+            
+            grid.innerHTML = html;
+        }
+
+        function renderHomeBannerMatrix(products) {
+            var container = document.getElementById('homePageBannerMatrixContainer');
+            var grid = document.getElementById('homePageBannerMatrix');
+            if (!container || !grid) return;
+            
+            var allBanners = [];
+            (products || []).forEach(function(p) {
+                var bannerArr = p.Banners || p.banners || '[]';
+                if (typeof bannerArr === 'string') {
+                    try { 
+                        var parsed = JSON.parse(bannerArr);
+                        if (Array.isArray(parsed)) {
+                            bannerArr = parsed;
+                        } else if (parsed && parsed.items) {
+                            bannerArr = parsed.items;
+                        } else {
+                            bannerArr = [];
+                        }
+                    } catch(e) {
+                        bannerArr = [];
+                    }
+                } else if (bannerArr && bannerArr.items) {
+                    bannerArr = bannerArr.items;
+                }
+                
+                if (bannerArr && Array.isArray(bannerArr)) {
+                    bannerArr.forEach(function(b) {
+                        if (typeof b === 'string' && b.length > 10) {
+                            allBanners.push({ url: b, title: p.Name || 'Product', color: '#333', size: '1rem', pid: p.ProductID || p.productid });
+                        } else if (typeof b === 'object' && b.url && b.url.length > 10) {
+                            allBanners.push({ 
+                                url: b.url, 
+                                title: b.title || p.Name || 'Product',
+                                color: b.color || '#333',
+                                size: b.size || '1rem',
+                                pid: p.ProductID || p.productid
+                            });
+                        }
+                    });
+                }
+            });
+            
+            if (allBanners.length === 0) {
+                container.style.display = 'none';
+                return;
+            }
+            
+            container.style.display = 'block';
+            
+            // Shuffle allBanners so we don't just see one product's banners
+            allBanners.sort(function() { return 0.5 - Math.random(); });
+            
+            // Show exactly as many banners as exist, up to a maximum of 8
+            var maxSlots = Math.min(allBanners.length, 8);
+            
+            var html = '';
+            for (var i = 0; i < maxSlots; i++) {
+                var banner = allBanners[i];
+                
+                html += '<div class="col matrix-slot animate__animated animate__fadeIn" style="cursor: pointer;" onclick="openHomeDetails(\'' + banner.pid + '\')">';
+                html += '  <div class="card h-100 border-0 shadow-sm rounded-4 overflow-hidden bg-white" style="transition: transform 0.3s; border: 1.5px solid #eee !important;" onmouseover="this.style.transform=\'scale(1.03)\'" onmouseout="this.style.transform=\'scale(1)\'">';
+                html += '    <div style="aspect-ratio: 1.6/1; overflow: hidden; position: relative; background: #fff;">';
+                html += '      <img src="' + banner.url + '" class="w-100 h-100 object-fit-contain matrix-img" style="transition: transform 0.5s ease; padding: 5px;" onmouseover="this.style.transform=\'scale(1.05)\'" onmouseout="this.style.transform=\'scale(1)\'">';
+                html += '    </div>';
+                html += '    <div class="card-body p-2 text-center bg-light" style="border-top: 1px solid #eee;">';
+                html += '      <h6 class="matrix-title fw-bold mb-0 text-truncate" style="color: ' + banner.color + '; font-size: ' + banner.size + '; font-weight: bold;">' + (banner.title || '') + '</h6>';
+                html += '    </div>';
+                html += '  </div>';
+                html += '</div>';
+            }
+            grid.innerHTML = html;
+            
+            // Store all banners globally for transitions
+            window.matrixBannersList = allBanners;
+            
+            if (window.matrixIntervalId) clearInterval(window.matrixIntervalId);
+            
+            // Only cycle banners if we have more banners than slots
+            if (allBanners.length > maxSlots) {
+                var transitionTimeMs = (window.bannerTransition || 4) * 1000;
+                
+                window.matrixIntervalId = setInterval(function() {
+                var slots = grid.querySelectorAll('.matrix-slot');
+                if (!slots || slots.length === 0) return;
+                
+                // Pick a random slot to update
+                var randomSlotIndex = Math.floor(Math.random() * slots.length);
+                var slotToUpdate = slots[randomSlotIndex];
+                
+                // Sequential banner update
+                var newBannerIndex = (randomSlotIndex + Math.floor(Math.random() * (window.matrixBannersList.length - 1)) + 1) % window.matrixBannersList.length;
+                var newBanner = window.matrixBannersList[newBannerIndex];
+                
+                // Update onclick
+                slotToUpdate.onclick = function() { openHomeDetails(newBanner.pid); };
+                
+                var oldImg = slotToUpdate.querySelector('.matrix-img');
+                var oldTitle = slotToUpdate.querySelector('.matrix-title');
+                
+                if (oldImg) oldImg.style.opacity = 0.2; // Fade out slightly
+                
+                setTimeout(function() {
+                    if (oldImg) {
+                        oldImg.src = newBanner.url;
+                        oldImg.style.opacity = 1; // Fade back in
+                    }
+                    if (oldTitle) {
+                        oldTitle.innerHTML = newBanner.title || '';
+                        oldTitle.style.color = newBanner.color || '#333';
+                        oldTitle.style.fontSize = newBanner.size || '1rem';
+                    }
+                }, 200); // 200ms halfway fade
+            }, transitionTimeMs);
+            }
+        }
+
+        function renderProductGrid(products) {
+            var grid = document.getElementById('productModelsGrid');
+            if (!grid) return;
+            if (!products || products.length === 0) {
+                grid.innerHTML = '<div class="text-center p-5"><p>No featured products available.</p></div>';
+                return;
+            }
+
+            var html = '';
+            for (var i = 0; i < products.length; i++) {
+                var p = products[i];
+                var img = p.PrimaryImage || 'https://via.placeholder.com/400x300?text=V-VARMA';
+                var stock = parseInt(p.Stock || p.stock || 0);
+                
+                var modelName = p.Name || p['Model Name'] || 'Standard';
+                var modelNo = p.ModelNo || p.modelno || 'N/A';
+                var title = p.ProductTitle || p.Name || 'V-VARMA Product';
+                var workingType = p['Mode of Operation'] || p.WorkingType || 'Standard';
+                
+                var sellingPrice = parseFloat(p.SellingPrice || p.sellingprice || p.Price || 0);
+                var offerPrice = parseFloat(p.OfferPrice || p.offerprice || sellingPrice);
+                var finalPrice = sellingPrice;
+                if (offerPrice > 0 && offerPrice < sellingPrice) {
+                    finalPrice = offerPrice;
+                }
+                var mrp = parseFloat(p.MRP || p.mrp || finalPrice || 0);
+                var discount = mrp > finalPrice ? Math.round(((mrp - finalPrice) / mrp) * 100) : 0;
+
+                let imgStyle = '';
+                let stockTextHtml = '';
+                let badgesHtml = '<div class="d-flex flex-column gap-1 position-absolute" style="top: 10px; left: 10px; z-index: 5;">';
+
+                if (i < 3) {
+                    badgesHtml += '<span class="badge bg-primary rounded-pill shadow-sm" style="font-size: 0.65rem; padding: 4px 8px;">New</span>';
+                }
+
+                if (stock <= 0) {
+                    badgesHtml += '<span class="badge bg-secondary rounded-pill shadow-sm" style="font-size: 0.65rem; padding: 4px 8px;">Out of Stock</span>';
+                    stockTextHtml = '<span class="text-danger small fw-bold"><i class="fas fa-times-circle me-1"></i>Out of Stock</span>';
+                    imgStyle = 'filter: grayscale(80%) opacity(0.6);';
+                } else if (stock < 5) {
+                    badgesHtml += '<span class="badge bg-warning text-dark rounded-pill shadow-sm" style="font-size: 0.65rem; padding: 4px 8px;">Low Stock</span>';
+                    stockTextHtml = `<span class="text-danger small fw-bold"><i class="fas fa-exclamation-circle me-1"></i>Only ${stock} left</span>`;
+                } else if (stock > 50) {
+                    badgesHtml += '<span class="badge bg-danger rounded-pill shadow-sm" style="font-size: 0.65rem; padding: 4px 8px;">Fast Selling</span>';
+                    stockTextHtml = `<span class="text-success small fw-bold"><i class="fas fa-check-circle me-1"></i>${stock} Available</span>`;
+                } else {
+                    stockTextHtml = `<span class="text-success small fw-bold"><i class="fas fa-check-circle me-1"></i>${stock} Available</span>`;
+                }
+                
+                badgesHtml += '</div>';
+
+                const isWishlisted = getWishlist().includes(p.ProductID || p.productid || p['Product ID']);
+                const wishlistBtnHtml = `<button class="wishlist-btn ${isWishlisted ? 'active' : ''}" onclick="toggleWishlist(event, '${p.ProductID || p.productid || p['Product ID']}')"><i class="${isWishlisted ? 'fas' : 'far'} fa-star"></i></button>`;
+
+                html += '<div class="col-12 col-sm-6 col-md-4 col-lg-4 col-xl-3 mb-4">';
+                html += '<div class="product-card h-100 shadow-sm border-0 rounded-4 overflow-hidden position-relative d-flex flex-column" onclick="openHomeDetails(\'' + (p.ProductID || p.productid || p['Product ID'] || '') + '\')" style="cursor:pointer; transition: transform 0.3s; background: #fff;">';
+                
+                // Image Box
+                html += '<div class="product-img-box" style="height: 250px; position: relative; background: #fdfdfd; display: flex; align-items: center; justify-content: center; border-bottom: 1px solid #eee;">';
+                
+                // Badges and Wishlist Button inside image box
+                html += wishlistBtnHtml;
+                html += badgesHtml;
+
+                html += '<img src="' + img + '" alt="' + title + '" class="w-100 h-100 object-fit-contain p-3" style="' + imgStyle + '">';
+                html += '</div>';
+
+                var avgRating = parseFloat(p.AverageRating || 0);
+                var ratingCount = parseInt(p.RatingCount || 0);
+                var starsHtml = '';
+                if (ratingCount > 0) {
+                    var fullStars = Math.floor(avgRating);
+                    var hasHalf = (avgRating - fullStars) >= 0.3 && (avgRating - fullStars) <= 0.7;
+                    var hasPointEightPlus = (avgRating - fullStars) >= 0.8;
+                    var actualFull = hasPointEightPlus ? fullStars + 1 : fullStars;
+                    
+                    for (var s = 1; s <= 5; s++) {
+                        if (s <= actualFull) {
+                            starsHtml += '<i class="fas fa-star text-warning"></i>';
+                        } else if (s === actualFull + 1 && hasHalf) {
+                            starsHtml += '<i class="fas fa-star-half-alt text-warning"></i>';
+                        } else {
+                            starsHtml += '<i class="far fa-star text-warning"></i>';
+                        }
+                    }
+                    starsHtml += ' <span class="text-muted ms-1">(' + avgRating + ')</span>';
+                } else {
+                    for (var s = 1; s <= 5; s++) {
+                        starsHtml += '<i class="far fa-star text-muted"></i>';
+                    }
+                    starsHtml += ' <span class="text-muted ms-1">(0)</span>';
+                }
+
+                html += '<div class="card-body p-3 text-start d-flex flex-column justify-content-between" style="flex: none;">';
+                html += '<div>';
+                
+                // Model Name & Model No Row
+                html += '<div class="d-flex justify-content-between align-items-center mb-1">';
+                html += '<span class="fw-bold text-secondary small text-truncate pe-2">' + modelName + '</span>';
+                html += '<span class="fw-bold text-dark small bg-light px-2 py-1 rounded border">' + modelNo + '</span>';
+                html += '</div>';
+                
+                html += '<h5 class="fw-bolder mb-1 text-brown text-truncate" title="' + title + '">' + title + '</h5>';
+                html += '<div class="mb-2 small">' + starsHtml + '</div>';
+                html += '<p class="small text-muted mb-1 text-truncate"><strong>Working Type:</strong> ' + workingType + '</p>';
+                html += '<div class="mb-2">' + stockTextHtml + '</div>';
+                html += '<div class="d-flex align-items-baseline gap-2 flex-wrap mb-2">';
+                html += '<span class="text-success fw-bolder fs-5">₹' + finalPrice.toLocaleString('en-IN') + '</span>';
+                if (finalPrice < sellingPrice) {
+                    html += '<span class="text-muted small text-decoration-line-through">₹' + sellingPrice.toLocaleString('en-IN') + '</span>';
+                }
+                if (mrp > sellingPrice && mrp > finalPrice) {
+                    html += '<span class="text-muted small text-decoration-line-through">₹' + mrp.toLocaleString('en-IN') + '</span>';
+                }
+                if (discount > 0) {
+                    html += '<span class="badge bg-danger ms-auto fw-bold">' + discount + '% OFF</span>';
+                }
+                html += '</div>';
+                html += '</div>';
+                
+                html += '<button class="btn btn-sm btn-outline-brown w-100 rounded-pill mt-2 fw-bold">View Details</button>';
+                html += '</div></div></div>';
+            }
+            grid.innerHTML = html;
+        }
+
+        function renderRotatingCatalog(items) {
+            var container = document.getElementById('catalogRotatingContainer');
+            var row = document.getElementById('rotatingCatalogRow');
+            if (!container || !row) return;
+            container.style.display = 'block';
+            
+            var html = '';
+            for (var i = 0; i < items.length; i++) {
+                var item = items[i];
+                var imgUrl = item.ImageURL || item['Image URL'] || '';
+                var caption = item.Caption || 'V-VARMA PRODUCT';
+                
+                html += '<div class="col promo-item" onclick="openHomeDetails(\'' + (item.LinkedProductID || item['Linked Product ID'] || item.pid || '') + '\')">';
+                html += '<div class="promo-card">';
+                html += '<div class="promo-model">' + caption + '</div>';
+                html += '<div class="promo-img-container">';
+                html += '<img src="' + imgUrl + '" alt="' + caption + '" onerror="this.src=\'https://via.placeholder.com/300x200?text=V-VARMA\'">';
+                html += '</div>';
+                html += '</div></div>';
+            }
+            row.innerHTML = html;
+        }
+
+        function renderCarousel(images, interval) {
+            var container = document.getElementById('publicCarouselContainer');
+            if (!container || !images || images.length === 0) return;
+            container.style.display = 'block';
+            
+            var html = '<div id="mainCarousel" class="carousel slide carousel-fade"><div class="carousel-inner">';
+            
+            for (var i = 0; i < images.length; i++) {
+                var img = images[i];
+                var title = img.Title || 'Smart Solutions for Liquid Control.';
+                var badge = img.Badge || 'Next-Gen Automation';
+                var desc = img.Description || 'V-VARMA pioneers in electronic water level controllers...';
+                var btn1 = img.Btn1Text || 'Explore Catalog';
+                var btn2 = img.Btn2Text || 'Register Product';
+                var imgUrl = img.ImageURL || img['Image URL'] || 'https://via.placeholder.com/1200x600?text=V-VARMA';
+                
+                var titleParts = title.split(' ');
+                var lastPart = titleParts.pop();
+                var firstPart = titleParts.join(' ');
+                
+                var style = {};
+                try {
+                    if (img.StyleJSON) style = JSON.parse(img.StyleJSON);
+                } catch (e) { console.warn('StyleJSON error:', e); }
+                
+                var customStyle = 'font-size: ' + (style.fontSize || '3.8') + 'rem; color: ' + (style.color || '#1a1a1a') + '; font-weight: ' + (style.fontWeight || '800') + ';';
+                
+                html += '<div class="carousel-item ' + (i === 0 ? 'active' : '') + '">';
+                html += '<div class="hero-carousel-item row align-items-center g-0">';
+                html += '<div class="col-lg-6 ps-lg-5 pe-lg-4 text-start">';
+                html += '<div class="animate-box">';
+                html += '<span class="hero-badge animate__animated animate__fadeInDown" style="animation-delay: 0.2s;">' + badge + '</span>';
+                html += '<h1 class="hero-title animate__animated animate__fadeInLeft" style="' + customStyle + ' animation-delay: 0.4s;">' + firstPart + ' <span class="text-orange">' + lastPart + '</span></h1>';
+                html += '<p class="hero-desc animate__animated animate__fadeInUp" style="animation-delay: 0.6s;">' + desc + '</p>';
+                html += '<div class="hero-btns mt-4 animate__animated animate__fadeInUp" style="animation-delay: 0.8s;">';
+                html += '<a href="<?= appUrl ?>?page=' + (img.Btn1Url || 'catalog') + '" class="btn hero-btn-orange me-3">' + btn1 + '</a>';
+                html += '<a href="<?= appUrl ?>?page=' + (img.Btn2Url || 'register') + '" class="btn hero-btn-dark">' + btn2 + '</a>';
+                html += '</div><div class="hero-stats mt-5 animate__animated animate__fadeIn" style="animation-delay: 1s;">';
+                html += '<div class="hero-stat-item"><h4>' + (img.Stat1 || '25+') + '</h4><p>Years Exp</p></div>';
+                html += '<div class="hero-stat-item"><h4>' + (img.Stat2 || '50K+') + '</h4><p>Installs</p></div>';
+                html += '<div class="hero-stat-item"><h4>' + (img.Stat3 || '100%') + '</h4><p>Reliability</p></div>';
+                html += '</div></div></div>';
+                html += '<div class="col-lg-6 text-center pe-lg-5">';
+                html += '<div class="hero-image-wrapper mx-auto shadow-xl animate__animated animate__zoomIn" style="animation-delay: 0.5s;">';
+                html += '<img src="' + imgUrl + '" alt="' + title + '" class="img-fluid" onerror="this.src=\'https://via.placeholder.com/1200x600?text=V-VARMA\'">';
+                html += '<div class="hero-floating-card animate__animated animate__bounceIn" style="animation-delay: 1.2s;">';
+                html += '<div class="icon"><i class="fas fa-check"></i></div>';
+                html += '<div><h6 class="fw-bold">99.9% Up-time</h6><p class="small text-muted">Sensor Efficiency</p></div>';
+                html += '</div></div></div></div></div>';
+            }
+            
+            html += '</div>';
+            html += '<button class="carousel-control-prev" type="button" data-bs-target="#mainCarousel" data-bs-slide="prev" style="width: 50px; z-index: 20;"><span class="carousel-control-prev-icon bg-dark rounded-circle p-3"></span></button>';
+            html += '<button class="carousel-control-next" type="button" data-bs-target="#mainCarousel" data-bs-slide="next" style="width: 50px; z-index: 20;"><span class="carousel-control-next-icon bg-dark rounded-circle p-3"></span></button>';
+            html += '</div>';
+            
+            container.innerHTML = html;
+
+            var initCarousel = function() {
+                var el = document.getElementById('mainCarousel');
+                if (!el || typeof bootstrap === 'undefined') {
+                    setTimeout(initCarousel, 200);
+                    return;
+                }
+                
+                try {
+                    var carousel = new bootstrap.Carousel(el, { 
+                        interval: parseInt(interval) || 5000, 
+                        ride: 'carousel',
+                        pause: 'hover',
+                        wrap: true
+                    });
+                    carousel.cycle();
+                    
+                    el.addEventListener('slide.bs.carousel', function() {
+                        var items = el.querySelectorAll('.animate__animated');
+                        for(var i=0; i<items.length; i++) items[i].style.visibility = 'hidden';
+                    });
+                    
+                    el.addEventListener('slid.bs.carousel', function() {
+                        var activeItem = el.querySelector('.carousel-item.active');
+                        if (!activeItem) return;
+                        var items = activeItem.querySelectorAll('.animate__animated');
+                        for(var i=0; i<items.length; i++) items[i].style.visibility = 'visible';
+                    });
+                    console.log('[HOME] Carousel initialized');
+                } catch (e) { console.error('[HOME] Carousel Init Error:', e); }
+            };
+            setTimeout(initCarousel, 100);
+        }
+
+        // --- PUBLIC NEWS TICKER BANNER SYSTEM ---
+        function loadPublicTicker() {
+            google.script.run
+                .withSuccessHandler(res => {
+                    if (res && res.success && res.data && res.data.length > 0) {
+                        const activeNotifs = res.data.filter(n => {
+                            const aud = String(n.Audience || n.audience || '').toLowerCase().trim();
+                            const stat = String(n.Status || n.status || '').toLowerCase().trim();
+                            return (aud === 'public' || aud === 'all') && stat !== 'read' && stat !== 'paused' && stat !== 'deleted';
+                        });
+                        
+                        if (activeNotifs.length > 0) {
+                            const latest = activeNotifs[activeNotifs.length - 1];
+                            const banner = document.getElementById('public-ticker-banner');
+                            const textEl = document.getElementById('ticker-scroll-text');
+                            
+                            if (banner && textEl) {
+                                textEl.innerText = `${latest.Title || 'Alert'}: ${latest.Message || ''}`;
+                                textEl.setAttribute('data-ref-type', latest.RefType || latest.reftype || latest.refType || '');
+                                textEl.setAttribute('data-ref-id', latest.RefID || latest.refid || latest.RefId || '');
+                                
+                                // Apply custom styles
+                                const size = latest.TextSize || latest.textsize || '16px';
+                                const color = latest.TextColor || latest.textcolor || '#ffffff';
+                                const customDuration = latest.ScrollDuration || latest.scrollduration || '';
+                                
+                                textEl.style.fontSize = size;
+                                textEl.style.color = color;
+                                
+                                if (customDuration && !isNaN(customDuration) && parseInt(customDuration) > 0) {
+                                    textEl.style.animationDuration = `${customDuration}s`;
+                                } else {
+                                    const textLength = textEl.innerText.length;
+                                    const speed = Math.max(15, Math.min(45, textLength * 0.25));
+                                    textEl.style.animationDuration = `${speed}s`;
+                                }
+                                
+                                banner.style.display = 'block';
+                            }
+                        }
+                    }
+                })
+                .withFailureHandler(err => {
+                    console.error('Failed to load public news ticker:', err);
+                })
+                .getLiveNotifications('public', '');
+        }
+
+        function handleTickerClick() {
+            const textEl = document.getElementById('ticker-scroll-text');
+            if (!textEl) return;
+            const refType = textEl.getAttribute('data-ref-type');
+            const refId = textEl.getAttribute('data-ref-id');
+            
+            if (!refType || !refId) return;
+            
+            if (refType === 'page') {
+                window.location.href = appUrl + refId;
+            } else if (refType === 'custom') {
+                if (refId.startsWith('http') || refId.startsWith('//')) {
+                    window.open(refId, '_blank');
+                } else {
+                    window.location.href = refId;
+                }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', loadHomeSettings);
+        function getWishlist() {
+            return JSON.parse(localStorage.getItem('vvarma_wishlist') || '[]');
+        }
+
+        function toggleWishlist(e, pid) {
+            e.stopPropagation();
+            if (!pid || pid === 'undefined') return;
+            let list = getWishlist();
+            const btn = e.currentTarget;
+            const icon = btn.querySelector('i');
+            
+            if (list.includes(pid)) {
+                list = list.filter(id => id !== pid);
+                btn.classList.remove('active');
+                icon.classList.remove('fas');
+                icon.classList.add('far');
+            } else {
+                list.push(pid);
+                btn.classList.add('active');
+                icon.classList.remove('far');
+                icon.classList.add('fas');
+            }
+            localStorage.setItem('vvarma_wishlist', JSON.stringify(list));
+        }
+
+        function openHomeDetails(pid) {
+            if (!pid || pid === 'undefined') return;
+            var appUrl = '<?= appUrl ?>';
+            var targetUrl = appUrl + '?page=catalog&pid=' + pid;
+            
+            try {
+                window.top.location.href = targetUrl;
+            } catch(e) {
+                window.location.href = targetUrl;
+            }
+        }
+    </script>
+
+    <?!= include('floating_icons'); ?>
+    <?!= include('chat_widget'); ?>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <?!= include('shared_scripts.js'); ?>
+</body>
+</html>

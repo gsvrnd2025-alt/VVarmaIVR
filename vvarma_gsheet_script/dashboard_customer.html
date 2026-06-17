@@ -1,0 +1,1975 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base target="_top">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Customer Dashboard - V-VARMA</title>
+    
+    <!-- Google Fonts for Modern Typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    
+    <?!= include('shared_styles'); ?>
+    
+    <style>
+        html { font-size: 12.1px; }
+        :root {
+            --cust-primary: #d81b60;
+            --cust-secondary: #fce4ec;
+            --glass-bg: rgba(255, 255, 255, 0.85);
+            --glass-border: rgba(255, 255, 255, 0.3);
+            --text-dark: #2c3e50;
+            --text-muted: #6c757d;
+        }
+        
+        body { overflow-x: hidden; width: 100%; max-width: 100vw; 
+            background: linear-gradient(135deg, #f0f4f8 0%, #e2eafc 100%);
+            font-family: 'Inter', sans-serif; 
+            padding-bottom: 75px; 
+            padding-top: 85px;
+            color: var(--text-dark);
+            transition: padding-left 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+        }
+
+        /* Glassmorphism Classes */
+        .glass-card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.05);
+            border-radius: 1.25rem;
+            transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+        }
+        .glass-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 40px 0 rgba(31, 38, 135, 0.1);
+        }
+
+        /* Top Marquee */
+        .top-marquee {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: 25px;
+            background: linear-gradient(90deg, #00838f, var(--cust-primary));
+            color: white;
+            display: flex;
+            align-items: center;
+            z-index: 1060;
+            font-size: 14.9px;
+            font-weight: 500;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .top-marquee marquee { padding: 0 15px; }
+
+        /* Custom Global Header */
+        .custom-header {
+            position: fixed;
+            top: 25px; left: 0; right: 0;
+            height: 50px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(15px);
+            z-index: 1050;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+            border-bottom: 1px solid var(--glass-border);
+        }
+        .header-brand { font-weight: 700; color: var(--cust-primary); font-size: 1.38rem; display: flex; align-items: center; }
+        .header-actions { display: flex; align-items: center; gap: 10px; }
+        .header-icon-btn { 
+            background: none; border: none; font-size: 18.4px; color: var(--text-dark); position: relative;
+            width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 50%;
+            transition: background 0.2s, color 0.2s;
+        }
+        .header-icon-btn:hover { background: var(--cust-secondary); color: var(--cust-primary); }
+        .badge-notify { position: absolute; top: 2px; right: 2px; font-size: 10.3px; padding: 3px 5px; background: #ff4757; color: white; border-radius: 50%; }
+
+        /* Sidebar Drawer */
+        .sidebar {
+            width: 200px;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            box-shadow: 4px 0 20px rgba(0,0,0,0.05);
+            height: calc(100vh - 95px);
+            position: fixed;
+            top: 75px;
+            left: 0;
+            overflow-y: auto;
+            z-index: 1040;
+            transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+            border-right: 1px solid var(--glass-border);
+        }
+        
+        .main-content {
+            margin-left: 200px;
+            padding: 15px;
+            min-height: calc(100vh - 100px);
+            transition: margin-left 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+            max-width: 100%;
+        }
+
+        /* Sidebar Toggled Classes for Responsive Grid */
+        body.sidebar-collapsed .sidebar {
+            transform: translateX(-100%);
+        }
+        body.sidebar-collapsed .main-content {
+            margin-left: 0;
+        }
+
+        @media (max-width: 991.98px) {
+            .sidebar { transform: translateX(-100%); }
+            .sidebar.show { transform: translateX(0); }
+            .main-content { margin-left: 0 !important; width: 100%; max-width: 100vw; }
+            .desktop-only { display: none !important; }
+        }
+        @media (min-width: 992px) {
+            html { zoom: 1; }
+            
+            /* Fix Header 15% natively (solves click coordinate bug on fixed elements) */
+            .top-marquee { height: 29px; display: flex; align-items: center; }
+            .top-marquee span { font-size: 17.2px; }
+            .custom-header { height: 58px; top: 29px; }
+            .header-brand { font-size: 1.59rem; }
+            .header-icon-btn { font-size: 21.2px; width: 39px; height: 39px; }
+            .search-container .form-control, .search-container .input-group-text { font-size: 1.21rem; padding-top: 0.4rem; padding-bottom: 0.4rem; }
+            
+            /* Fix Sidebar 15% natively */
+            .sidebar { width: 230px; top: 87px; height: calc(100vh - 87px); }
+            .sidebar .nav-link { padding: 14px 23px; font-size: 1.26rem; }
+            .sidebar .text-center img { width: 92px !important; height: 92px !important; }
+            .sidebar .text-center h6 { font-size: 1.32rem; }
+            .sidebar .badge { font-size: 1.03rem; padding: 0.5rem 1rem; }
+
+            /* Main Content 35% zoom + strictly constrained layout (solves horizontal overflow) */
+            .main-content { 
+                zoom: 1.35; 
+                margin-left: calc(230px / 1.35); 
+                max-width: calc(100% / 1.35 - (230px / 1.35)); 
+                width: 100%;
+                overflow-x: hidden;
+            }
+            body { overflow-x: hidden; width: 100%; max-width: 100vw; padding-bottom: 20px; padding-top: 87px; }
+            .bottom-nav { display: none !important; }
+        }
+
+        /* Sidebar Nav Pills */
+        .nav-pills .nav-link {
+            color: var(--text-dark);
+            padding: 12px 20px;
+            border-radius: 0 25px 25px 0;
+            margin-right: 15px;
+            margin-bottom: 5px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        .nav-pills .nav-link:hover {
+            background-color: var(--cust-secondary);
+            color: var(--cust-primary);
+        }
+        .nav-pills .nav-link.active {
+            background-color: var(--cust-secondary);
+            color: var(--cust-primary) !important;
+            font-weight: 600;
+            box-shadow: inset 4px 0 0 var(--cust-primary);
+        }
+        .nav-link i { width: 24px; text-align: center; margin-right: 12px; font-size: 1.26rem; }
+
+        /* Bottom Navigation (Mobile) */
+        .bottom-nav {
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            height: 65px;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(15px);
+            box-shadow: 0 -4px 20px rgba(0,0,0,0.05);
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            z-index: 1040;
+            border-top-left-radius: 20px;
+            border-top-right-radius: 20px;
+            border-top: 1px solid var(--glass-border);
+        }
+        .bottom-nav-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 12.6px;
+            font-weight: 500;
+            padding: 8px 10px;
+            border-radius: 15px;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .bottom-nav-item i { font-size: 25.3px; margin-bottom: 4px; transition: transform 0.2s; }
+        .bottom-nav-item.active { color: var(--cust-primary); background: var(--cust-secondary); }
+        .bottom-nav-item.active i { transform: translateY(-2px); }
+
+        /* Timeline UI */
+        .timeline {
+            position: relative;
+            padding-left: 20px;
+            margin: 20px 0;
+        }
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 5px; top: 0; bottom: 0;
+            width: 2px;
+            background: #e9ecef;
+        }
+        .timeline-item {
+            position: relative;
+            margin-bottom: 20px;
+        }
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -19px; top: 4px;
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: var(--cust-primary);
+            border: 2px solid white;
+            box-shadow: 0 0 0 2px var(--cust-secondary);
+        }
+
+        /* Search Box styling */
+        .search-container .input-group {
+            box-shadow: 0 2px 10px rgba(0,0,0,0.03);
+            border-radius: 50px;
+            overflow: hidden;
+            border: 1px solid rgba(0,0,0,0.08);
+            transition: all 0.2s;
+        }
+        .search-container .input-group:focus-within {
+            border-color: var(--cust-primary);
+            box-shadow: 0 0 0 3px var(--cust-secondary);
+        }
+        .search-container input:focus {
+            box-shadow: none !important;
+            outline: none !important;
+        }
+        .search-result-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 10px;
+            border-radius: 10px;
+            margin-bottom: 5px;
+            cursor: pointer;
+            transition: background 0.2s;
+            text-decoration: none;
+            color: inherit;
+        }
+        .search-result-item:hover {
+            background: var(--cust-secondary);
+            color: var(--cust-primary);
+        }
+        .search-result-icon {
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: rgba(0, 131, 143, 0.1);
+            color: #00838f;
+            margin-right: 12px;
+            font-size: 13.8px;
+        }
+        .search-result-item:hover .search-result-icon {
+            background: var(--cust-primary);
+            color: white;
+        }
+        .search-category-header {
+            font-size: 11.5px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            letter-spacing: 0.5px;
+            margin-top: 10px;
+            margin-bottom: 5px;
+            padding-left: 5px;
+        }
+
+        /* Premium custom styling for html5-qrcode scanner box */
+        #reader {
+            border: none !important;
+            background: #fff;
+            padding: 15px !important;
+            border-radius: 12px;
+        }
+        #reader__dashboard_section_swaplink {
+            text-decoration: none !important;
+            color: var(--cust-primary) !important;
+            font-weight: 600;
+            display: inline-block;
+            margin-top: 10px;
+        }
+        #reader button {
+            background-color: var(--cust-primary) !important;
+            color: white !important;
+            border: none !important;
+            padding: 8px 16px !important;
+            border-radius: 20px !important;
+            font-weight: 500 !important;
+            transition: all 0.2s !important;
+            margin: 5px !important;
+        }
+        #reader button:hover {
+            opacity: 0.9 !important;
+            transform: translateY(-1px) !important;
+        }
+        #reader input[type="file"] {
+            border: 1px dashed rgba(0,0,0,0.15) !important;
+            padding: 12px !important;
+            border-radius: 8px !important;
+            width: 100% !important;
+            background: #f8fafc !important;
+            margin-top: 10px !important;
+        }
+
+        /* Custom Input */
+        .form-control, .form-select {
+            border-radius: 10px;
+            border: 1px solid #ced4da;
+            padding: 10px 15px;
+            transition: all 0.3s;
+        }
+        .form-control:focus, .form-select:focus {
+            box-shadow: 0 0 0 3px var(--cust-secondary);
+            border-color: var(--cust-primary);
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        /* Chat UI Container */
+        .chat-container { height: 400px; display: flex; flex-direction: column; }
+        .chat-messages { flex: 1; overflow-y: auto; padding: 15px; background: #e5ddd5; border-radius: 10px; }
+        .message-bubble { max-width: 80%; padding: 10px 15px; border-radius: 15px; margin-bottom: 10px; font-size: 16.1px; }
+        .message-incoming { background: white; align-self: flex-start; border-bottom-left-radius: 0; }
+        .message-outgoing { background: #dcf8c6; align-self: flex-end; border-bottom-right-radius: 0; margin-left: auto; }
+        .chat-input-area { display: flex; gap: 10px; margin-top: 10px; }
+
+        .otp-display { font-size: 2.3rem; font-weight: 800; letter-spacing: 5px; color: var(--cust-primary); text-align: center; }
+    </style>
+</head>
+<body>
+
+    <!-- Top Scrolling Marquee -->
+    <div class="top-marquee">
+        <marquee behavior="scroll" direction="left" scrollamount="4">
+            <span id="announcementText"><i class="fas fa-bullhorn me-2"></i>Welcome to V-VARMA! Check our product catalog for the latest festive offers. Register your warranty online to get 1 month extended service free!</span>
+        </marquee>
+    </div>
+
+    <!-- Custom Global Header -->
+    <header class="custom-header">
+        <div class="header-brand">
+            <button class="btn btn-link text-dark p-0 me-3" onclick="toggleSidebar()">
+                <i class="fas fa-bars fs-4"></i>
+            </button>
+            <i class="fas fa-bolt text-warning me-2"></i> V-VARMA
+        </div>
+
+        <!-- Global Search Box -->
+        <div class="search-container position-relative flex-grow-1 mx-3" style="max-width: 400px;">
+            <div class="input-group input-group-sm">
+                <span class="input-group-text bg-white border-0 rounded-start-pill text-muted px-2"><i class="fas fa-search"></i></span>
+                <input type="text" id="globalSearchInput" placeholder="Search orders, serials, services..." class="form-control border-0 rounded-end-pill bg-white px-2 py-2" oninput="triggerGlobalSearch(this.value)">
+                <button class="btn btn-link text-muted position-absolute end-0 top-50 translate-middle-y me-2 p-0" id="clearSearchBtn" style="display: none; z-index: 10;" onclick="clearGlobalSearch()"><i class="fas fa-times-circle"></i></button>
+            </div>
+            <!-- Search Results Dropdown -->
+            <div id="globalSearchResults" class="glass-card p-3 position-absolute w-100 mt-2 d-none shadow-lg" style="top: 100%; z-index: 1100; max-height: 380px; overflow-y: auto; background: rgba(255, 255, 255, 0.98); border: 1px solid rgba(0,0,0,0.1); border-radius: 12px; backdrop-filter: blur(20px);">
+                <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom">
+                    <span class="fw-bold small text-muted"><i class="fas fa-poll-h me-1"></i>Search Results</span>
+                    <button class="btn btn-sm btn-link text-decoration-none p-0 small text-danger" onclick="closeSearchResults()">Close</button>
+                </div>
+                <div id="searchResultsBody">
+                    <!-- Dynamic Search Results List -->
+                </div>
+            </div>
+        </div>
+
+        <div class="header-actions">
+            <!-- Scanner -->
+            <button class="header-icon-btn text-info" onclick="openGlobalScanner()" title="Scan QR Code"><i class="fas fa-qrcode"></i></button>
+            
+            <!-- Notifications Button & Dropdown Container -->
+            <div class="position-relative">
+                <button class="header-icon-btn" onclick="toggleNotificationsDropdown(event)" title="Notifications">
+                    <i class="far fa-bell"></i>
+                    <span class="badge-notify" id="notificationBadge">0</span>
+                </button>
+                
+                <!-- Notification Glassmorphic Dropdown -->
+                <div id="notificationDropdown" class="glass-card position-absolute shadow-lg d-none" style="right: 0; top: 50px; width: 330px; z-index: 1100; border: 1px solid rgba(0,0,0,0.1); border-radius: 14px; background: rgba(255, 255, 255, 0.98); backdrop-filter: blur(20px);">
+                    <div class="p-3 border-bottom d-flex justify-content-between align-items-center">
+                        <h6 class="fw-bold mb-0 text-dark"><i class="fas fa-bell me-2 text-info"></i>Notifications</h6>
+                        <div class="d-flex gap-2 align-items-center">
+                            <button class="btn btn-link p-0 small text-decoration-none text-info" style="font-size: 12.6px;" onclick="markAllNotificationsAsRead(event)">Mark all read</button>
+                            <span class="text-muted">|</span>
+                            <button class="btn btn-link p-0 text-decoration-none text-muted" onclick="toggleNotificationsDropdown(event)"><i class="fas fa-times"></i></button>
+                        </div>
+                    </div>
+                    <div id="notificationListBody" style="max-height: 280px; overflow-y: auto;" class="p-2">
+                        <!-- Dynamic Notifications List -->
+                        <div class="text-center py-4 text-muted small">No notifications found.</div>
+                    </div>
+                    <div class="p-2 border-top text-center bg-light rounded-bottom-4">
+                        <button class="btn btn-link btn-sm text-decoration-none w-100 text-muted p-1" onclick="toggleNotificationsDropdown(event)">Close Window</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Profile -->
+            <button class="header-icon-btn" onclick="showProfileTab()" title="My Profile" id="headerProfileBtn">
+                <img src="https://ui-avatars.com/api/?name=Customer&background=00bcd4&color=fff" alt="User" class="rounded-circle" id="headerProfileImg" style="width: 30px; height: 25px; object-fit:cover;">
+            </button>
+        </div>
+    </header>
+
+    <!-- Sidebar -->
+    <div id="sidebar" class="sidebar pt-4">
+        <div class="text-center mb-4 px-3">
+            <div class="position-relative d-inline-block mb-3">
+                <img src="https://ui-avatars.com/api/?name=Customer&background=00bcd4&color=fff&size=80" alt="User" class="rounded-circle shadow-sm" id="sidebarProfileImg" style="width:80px;height:80px;object-fit:cover;cursor:pointer;" onclick="showProfileTab()">
+                <span class="position-absolute bottom-0 end-0 bg-info rounded-circle d-flex align-items-center justify-content-center" style="width:24px;height:24px;cursor:pointer;" onclick="showProfileTab()">
+                    <i class="fas fa-pen" style="font-size:10px;color:white;"></i>
+                </span>
+            </div>
+            <h6 class="fw-bold mb-0" id="sidebarCustName">Loading...</h6>
+            <span class="badge bg-info mt-1 rounded-pill px-3">Customer Panel</span>
+        </div>
+        
+        <ul class="nav flex-column nav-pills" id="v-pills-tab" role="tablist">
+            <li class="nav-item">
+                <a class="nav-link active" id="v-pills-dashboard-tab" data-bs-toggle="pill" href="#v-pills-dashboard" role="tab" onclick="setActiveNav('dashboard')">
+                    <i class="fas fa-home"></i> Dashboard
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" id="v-pills-profile-tab" data-bs-toggle="pill" href="#v-pills-profile" role="tab" onclick="setActiveNav('profile'); loadCustomerProfile();">
+                    <i class="fas fa-user-edit"></i> My Profile
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" id="v-pills-products-tab" data-bs-toggle="pill" href="#v-pills-products" role="tab" onclick="loadCustomerProducts(); setActiveNav('orders')">
+                    <i class="fas fa-box-open"></i> My Orders & Warranty
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" id="v-pills-complaint-tab" data-bs-toggle="pill" href="#v-pills-complaint" role="tab" onclick="loadCustomerComplaints(); setActiveNav('complaints')">
+                    <i class="fas fa-tools"></i> Complaints & Service
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" id="v-pills-catalog-tab" data-bs-toggle="pill" href="#v-pills-catalog" role="tab" onclick="setActiveNav('catalog')">
+                    <i class="fas fa-shopping-cart"></i> Product Catalog
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" id="v-pills-chat-tab" data-bs-toggle="pill" href="#v-pills-chat" role="tab" onclick="setActiveNav('chat')">
+                    <i class="fas fa-comments"></i> Live Support Chat
+                </a>
+            </li>
+            <li class="nav-item mt-4 px-4">
+                <a href="javascript:logout()" class="btn btn-danger w-100 rounded-pill shadow-sm"><i class="fas fa-sign-out-alt me-2"></i> Logout</a>
+            </li>
+        </ul>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content container-fluid">
+        <div class="tab-content" id="v-pills-tabContent">
+            
+            <!-- Dashboard Tab -->
+            <div class="tab-pane fade show active" id="v-pills-dashboard" role="tabpanel">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h4 class="fw-bold mb-0">Overview</h4>
+                    <span class="text-muted small" id="currentDate"></span>
+                </div>
+                
+                <div class="row g-4">
+                    <!-- Left Column: PIN + Stats -->
+                    <div class="col-lg-7">
+                        <!-- OTP Alert Card -->
+                        <div class="glass-card mb-4 p-3" style="border-left: 4px solid var(--cust-primary);">
+                            <div class="d-flex align-items-center justify-content-between">
+                                <div>
+                                    <h6 class="fw-bold text-info mb-1" style="color: var(--cust-primary) !important;"><i class="fas fa-shield-alt me-2"></i>Active Service PIN</h6>
+                                    <p class="small text-muted mb-0">Share this with technician upon arrival</p>
+                                </div>
+                                <div class="otp-display bg-white px-3 py-1 rounded shadow-sm" style="color: var(--cust-primary)">4829</div>
+                            </div>
+                        </div>
+
+                        <!-- Stats Cards Grid -->
+                        <div class="row g-3">
+                            <div class="col-4">
+                                <div class="glass-card p-3 text-center h-100" onclick="document.getElementById('v-pills-products-tab').click()" style="cursor:pointer">
+                                    <div class="rounded-circle bg-info bg-opacity-10 d-inline-flex p-2 mb-2 text-info">
+                                        <i class="fas fa-box fa-lg"></i>
+                                    </div>
+                                    <h4 class="fw-bold mb-0" id="stat-products">0</h4>
+                                    <p class="text-muted" style="font-size: 11.5px; margin-bottom: 0;">Products</p>
+                                </div>
+                            </div>
+                            <div class="col-4">
+                                <div class="glass-card p-3 text-center h-100" onclick="document.getElementById('v-pills-complaint-tab').click()" style="cursor:pointer">
+                                    <div class="rounded-circle bg-warning bg-opacity-10 d-inline-flex p-2 mb-2 text-warning">
+                                        <i class="fas fa-tools fa-lg"></i>
+                                    </div>
+                                    <h4 class="fw-bold mb-0" id="stat-complaints">0</h4>
+                                    <p class="text-muted" style="font-size: 11.5px; margin-bottom: 0;">Services</p>
+                                </div>
+                            </div>
+                            <div class="col-4">
+                                 <div class="glass-card p-3 text-center h-100 bg-info text-white" style="cursor:pointer; background: linear-gradient(135deg, #00838f 0%, var(--cust-primary) 100%) !important;" onclick="openGlobalScanner()">
+                                    <div class="d-inline-flex mb-2"><i class="fas fa-qrcode fa-lg"></i></div>
+                                    <h6 class="fw-bold" style="font-size: 12.1px; margin-bottom: 0;">Scan QR</h6>
+                                    <p class="small mb-0 opacity-75 d-none d-md-block" style="font-size: 9.2px;">Register/Book</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Right Column: Recent Activity -->
+                    <div class="col-lg-5">
+                        <div class="glass-card p-3 h-100">
+                            <h6 class="fw-bold mb-3"><i class="fas fa-history me-2 text-primary"></i>Recent Activity</h6>
+                            <div class="timeline" style="margin: 10px 0;">
+                                <div class="timeline-item" style="margin-bottom: 15px;">
+                                    <h6 class="fw-bold mb-0" style="font-size: 12.6px;">Service Completed</h6>
+                                    <p class="text-muted mb-0" style="font-size: 11.5px;">Technician fixed Model X200. (Yesterday)</p>
+                                </div>
+                                <div class="timeline-item" style="margin-bottom: 5px;">
+                                    <h6 class="fw-bold mb-0" style="font-size: 12.6px;">Product Registered</h6>
+                                    <p class="text-muted mb-0" style="font-size: 11.5px;">Warranty activated for Water Purifier. (12 Oct)</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Profile Tab -->
+            <div class="tab-pane fade" id="v-pills-profile" role="tabpanel">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h4 class="fw-bold mb-0"><i class="fas fa-user-circle me-2" style="color:var(--cust-primary)"></i>My Profile</h4>
+                    <button class="btn btn-sm rounded-pill px-3 fw-bold" id="profileEditToggleBtn" onclick="toggleProfileEditMode()" style="background:var(--cust-secondary);color:var(--cust-primary);">
+                        <i class="fas fa-pen me-1"></i>Edit Profile
+                    </button>
+                </div>
+
+                <!-- Profile View Mode -->
+                <div id="profileViewMode">
+                    <div class="glass-card p-4 mb-3">
+                        <div class="row align-items-center g-4">
+                            <div class="col-auto">
+                                <div class="position-relative">
+                                    <img id="profileViewPhoto" src="https://ui-avatars.com/api/?name=Customer&background=00bcd4&color=fff&size=120" class="rounded-circle shadow" style="width:110px;height:110px;object-fit:cover;border:3px solid var(--cust-primary);">
+                                    <span class="position-absolute bottom-0 end-0 bg-info rounded-circle d-flex align-items-center justify-content-center" style="width:28px;height:28px;cursor:pointer;background:var(--cust-primary)!important;" onclick="toggleProfileEditMode()">
+                                        <i class="fas fa-camera" style="font-size:11px;color:white;"></i>
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="col">
+                                <h4 class="fw-bold mb-1" id="profileViewName">—</h4>
+                                <p class="text-muted mb-1 small"><i class="fas fa-phone me-2" style="color:var(--cust-primary)"></i><span id="profileViewMobile">—</span></p>
+                                <p class="text-muted mb-1 small"><i class="fas fa-envelope me-2" style="color:var(--cust-primary)"></i><span id="profileViewEmail">—</span></p>
+                                <span class="badge rounded-pill px-3" style="background:var(--cust-secondary);color:var(--cust-primary);">Customer</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <div class="glass-card p-3 h-100">
+                                <small class="text-muted d-block mb-1"><i class="fas fa-map-pin me-1"></i>Pin Code</small>
+                                <div class="fw-bold" id="profileViewPin">—</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="glass-card p-3 h-100">
+                                <small class="text-muted d-block mb-1"><i class="fas fa-calendar me-1"></i>Member Since</small>
+                                <div class="fw-bold" id="profileViewSince">—</div>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div class="glass-card p-3">
+                                <small class="text-muted d-block mb-1"><i class="fas fa-map-marker-alt me-1"></i>Complete Address</small>
+                                <div class="fw-bold" id="profileViewAddress">—</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Profile Edit Mode (hidden by default) -->
+                <div id="profileEditMode" style="display:none;">
+                    <div class="glass-card p-4">
+                        <!-- Photo Upload -->
+                        <div class="text-center mb-4">
+                            <div class="position-relative d-inline-block">
+                                <img id="profileEditPhoto" src="https://ui-avatars.com/api/?name=Customer&background=00bcd4&color=fff&size=120" class="rounded-circle shadow mb-2" style="width:100px;height:100px;object-fit:cover;border:3px solid var(--cust-primary);">
+                                <label for="profilePhotoUpload" class="position-absolute bottom-0 end-0 bg-info rounded-circle d-flex align-items-center justify-content-center" style="width:28px;height:28px;cursor:pointer;background:var(--cust-primary)!important;">
+                                    <i class="fas fa-camera" style="font-size:11px;color:white;"></i>
+                                </label>
+                                <input type="file" id="profilePhotoUpload" accept="image/*" style="display:none;" onchange="previewProfilePhoto(event)">
+                            </div>
+                            <p class="text-muted small mb-0">Tap camera icon to change photo</p>
+                        </div>
+
+                        <form id="custProfileForm" onsubmit="submitCustProfileEdit(event)">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label text-muted small fw-bold">Full Name</label>
+                                    <input type="text" class="form-control" id="custName" required placeholder="Your full name">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label text-muted small fw-bold">Mobile Number (Verified)</label>
+                                    <input type="text" class="form-control bg-light" id="custMobile" readonly>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label text-muted small fw-bold">Email Address</label>
+                                    <input type="email" class="form-control" id="custEmail" placeholder="Enter email">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label text-muted small fw-bold">Pin Code</label>
+                                    <input type="text" class="form-control" id="custPin" placeholder="e.g. 600001">
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label text-muted small fw-bold">Complete Address</label>
+                                    <textarea class="form-control" id="custAddress" rows="3" placeholder="Flat, Street, Area"></textarea>
+                                </div>
+                                <div class="col-12 d-flex gap-2 mt-2">
+                                    <button type="submit" class="btn text-white rounded-pill px-4 flex-grow-1" id="btnUpdateCustProfile" style="background:linear-gradient(135deg,#00838f,var(--cust-primary));"><i class="fas fa-save me-2"></i>Save Changes</button>
+                                    <button type="button" class="btn btn-outline-secondary rounded-pill px-4" onclick="toggleProfileEditMode()"><i class="fas fa-times me-1"></i>Cancel</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Products & Orders Tab -->
+            <div class="tab-pane fade" id="v-pills-products" role="tabpanel">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h4 class="fw-bold mb-0">My Products</h4>
+                    <button class="btn btn-sm btn-outline-info rounded-pill px-3" onclick="openGlobalScanner()"><i class="fas fa-plus me-1"></i> Register</button>
+                </div>
+                
+                <div id="custProductsGrid" class="row g-3">
+                    <div class="col-12 text-center py-5">
+                        <div class="spinner-border text-info" role="status"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Complaints Tab -->
+            <div class="tab-pane fade" id="v-pills-complaint" role="tabpanel">
+                <h4 class="fw-bold mb-4">Complaints & Service</h4>
+                
+                <ul class="nav nav-tabs mb-4" id="serviceTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active fw-bold text-dark" id="book-tab" data-bs-toggle="tab" data-bs-target="#book" type="button" role="tab">Book Service</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link fw-bold text-dark" id="history-tab" data-bs-toggle="tab" data-bs-target="#history" type="button" role="tab">History</button>
+                    </li>
+                </ul>
+                
+                <div class="tab-content">
+                    <div class="tab-pane fade show active" id="book" role="tabpanel">
+                        <div class="glass-card p-3 mb-4">
+                            <h6 class="fw-bold mb-3">Book New Request</h6>
+                            <form onsubmit="submitCustComplaint(event)">
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label small text-muted">Select Product / Serial Number</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" id="custCompSerial" placeholder="Enter Serial No or Scan" required>
+                                            <button class="btn btn-outline-info" type="button" onclick="openGlobalScanner('custCompSerial')"><i class="fas fa-qrcode"></i></button>
+                                        </div>
+                                        <div id="serialVerifyStatus" class="form-text mt-1"></div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label small text-muted">Select Issue Type</label>
+                                        <select class="form-select" id="custCompIssueType" required>
+                                            <option value="">-- Select Issue --</option>
+                                            <option value="Not working">Not Working</option>
+                                            <option value="Installation">New Installation</option>
+                                            <option value="Routine Service">Routine Maintenance</option>
+                                            <option value="Other">Other</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-12">
+                                        <label class="form-label small text-muted">Detailed Description</label>
+                                        <textarea class="form-control" rows="2" id="custCompIssue" placeholder="Describe the issue..."></textarea>
+                                    </div>
+                                    <div class="col-12 mt-3">
+                                        <button type="submit" class="btn btn-info text-white rounded-pill w-100 py-2" style="background-color: var(--cust-primary)">Submit Request</button>
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                    <div class="tab-pane fade" id="history" role="tabpanel">
+                        <div class="glass-card p-0 overflow-hidden">
+                            <div class="table-responsive">
+                                <table class="table table-hover align-middle mb-0 border-white">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Complaint ID</th>
+                                            <th>Product Title</th>
+                                            <th>Model No. / Name</th>
+                                            <th>Serial / Part No.</th>
+                                            <th>Warranty Status</th>
+                                            <th>Warranty Start</th>
+                                            <th>Warranty End</th>
+                                            <th>Status</th>
+                                            <th>Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="custComplaintsBody">
+                                        <tr><td colspan="4" class="text-center py-4">Loading...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Product Catalog Tab -->
+            <div class="tab-pane fade" id="v-pills-catalog" role="tabpanel">
+                <!-- Catalog Header -->
+                <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                    <h4 class="fw-bold mb-0"><i class="fas fa-store me-2" style="color:var(--cust-primary)"></i>Product Catalog</h4>
+                    <div class="d-flex gap-2 align-items-center">
+                        <div class="input-group input-group-sm" style="max-width:220px;">
+                            <span class="input-group-text bg-white border-end-0"><i class="fas fa-search text-muted"></i></span>
+                            <input type="text" class="form-control border-start-0" id="custCatalogSearch" placeholder="Search products..." oninput="filterCustCatalog(this.value)">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Category Pills -->
+                <div class="d-flex flex-wrap gap-2 mb-3" id="custCategoryPills">
+                    <span class="badge rounded-pill px-3 py-2 cust-cat-pill active" onclick="filterCustByCategory('All',this)" style="cursor:pointer;background:var(--cust-primary);color:white;">All</span>
+                </div>
+
+                <!-- Catalog Grid -->
+                <div id="inlineCatalogGrid" class="row g-3">
+                    <div class="col-12 text-center py-5">
+                        <div class="spinner-border" style="color:var(--cust-primary);" role="status"></div>
+                        <p class="text-muted mt-2">Loading catalog...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat Support Tab -->
+            <div class="tab-pane fade" id="v-pills-chat" role="tabpanel">
+                <h4 class="fw-bold mb-4">Live Support</h4>
+                <div class="row g-4">
+                    <div class="col-md-7">
+                        <div class="glass-card p-0 overflow-hidden chat-container shadow-sm">
+                            <div class="bg-info text-white p-3 d-flex justify-content-between align-items-center" style="background-color: var(--cust-primary) !important;">
+                                <div class="d-flex align-items-center">
+                                    <img src="https://ui-avatars.com/api/?name=Support&background=fff&color=00bcd4" class="rounded-circle me-2" width="40">
+                                    <div>
+                                        <h6 class="mb-0 fw-bold">Customer Care</h6>
+                                        <small class="opacity-75">Usually replies in minutes</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="chat-messages d-flex flex-column" id="chatMessagesArea">
+                                <div class="text-center my-2"><small class="text-muted bg-white px-2 py-1 rounded-pill">Today</small></div>
+                                <div class="message-bubble message-incoming shadow-sm">
+                                    Hello! How can we help you today?
+                                </div>
+                            </div>
+                            <div class="p-3 bg-white border-top">
+                                <form class="chat-input-area" onsubmit="sendChatMessage(event)">
+                                    <button type="button" class="btn btn-light rounded-circle"><i class="fas fa-paperclip"></i></button>
+                                    <input type="text" class="form-control rounded-pill bg-light border-0 px-3" id="chatInput" placeholder="Type a message..." required>
+                                    <button type="submit" class="btn btn-info text-white rounded-circle"><i class="fas fa-paper-plane"></i></button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-5">
+                        <div class="glass-card p-3 text-center h-100 d-flex flex-column justify-content-center">
+                            <i class="fab fa-whatsapp text-success fa-4x mb-3"></i>
+                            <h5 class="fw-bold">Prefer WhatsApp?</h5>
+                            <p class="text-muted small mb-4">Chat with us directly on WhatsApp for instant support and updates.</p>
+                            <button class="btn btn-success rounded-pill px-4 py-2 fw-bold" onclick="openWhatsApp()"><i class="fab fa-whatsapp me-2 fs-5"></i> Chat on WhatsApp</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Customer Product Detail Modal -->
+    <div class="modal fade" id="custProductDetailModal" tabindex="-1">
+        <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content border-0 shadow-lg rounded-4 overflow-hidden">
+                <div class="modal-header border-0 bg-light">
+                    <h5 class="modal-title fw-bold" id="custModalTitle">Product Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-0" style="max-height:82vh;overflow-y:auto;">
+                    <div class="row g-0">
+                        <!-- Images -->
+                        <div class="col-lg-5 p-3 bg-white border-end">
+                            <div class="position-relative mb-2" style="height:280px;background:#f8f9fa;border-radius:12px;overflow:hidden;display:flex;align-items:center;justify-content:center;">
+                                <img id="custMainImg" src="" alt="" style="max-width:95%;max-height:95%;object-fit:contain;transition:opacity 0.25s;">
+                                <button class="btn btn-sm btn-dark position-absolute start-0 top-50 translate-middle-y ms-2 rounded-circle" onclick="custModalNav(-1)" style="width:32px;height:32px;"><i class="fas fa-chevron-left"></i></button>
+                                <button class="btn btn-sm btn-dark position-absolute end-0 top-50 translate-middle-y me-2 rounded-circle" onclick="custModalNav(1)" style="width:32px;height:32px;"><i class="fas fa-chevron-right"></i></button>
+                                <span class="position-absolute top-0 end-0 m-2 badge bg-dark" id="custImgCounter" style="font-size:0.7rem;">1/1</span>
+                            </div>
+                            <div class="d-flex gap-2 overflow-auto pb-1" id="custThumbStrip"></div>
+                        </div>
+                        <!-- Details -->
+                        <div class="col-lg-7 p-4">
+                            <span class="badge rounded-pill px-3 py-2 mb-2" id="custModalCat" style="background:var(--cust-secondary);color:var(--cust-primary);">Category</span>
+                            <h4 class="fw-bold" id="custModalName"></h4>
+                            <p class="text-muted small" id="custModalTagline"></p>
+
+                            <div class="p-3 rounded-3 mb-3" style="background:var(--cust-secondary);">
+                                <div class="d-flex align-items-baseline gap-2">
+                                    <span class="fw-bold" style="font-size:1.6rem;color:var(--cust-primary);" id="custModalPrice">₹0</span>
+                                    <span class="text-decoration-line-through text-muted" id="custModalMRP"></span>
+                                    <span class="badge bg-danger" id="custModalDiscount"></span>
+                                </div>
+                                <small class="text-muted"><i class="fas fa-check-circle me-1 text-success"></i>Inclusive of all taxes</small>
+                            </div>
+
+                            <!-- Tabs -->
+                            <ul class="nav nav-tabs mb-3" role="tablist">
+                                <li class="nav-item"><a class="nav-link active fw-bold small" data-bs-toggle="tab" href="#custTabDesc">Overview</a></li>
+                                <li class="nav-item"><a class="nav-link fw-bold small" data-bs-toggle="tab" href="#custTabSpecs">Specs</a></li>
+                            </ul>
+                            <div class="tab-content" style="max-height:200px;overflow-y:auto;">
+                                <div class="tab-pane fade show active" id="custTabDesc">
+                                    <p class="small text-muted" id="custModalDesc"></p>
+                                    <div id="custModalFeatures"></div>
+                                </div>
+                                <div class="tab-pane fade" id="custTabSpecs">
+                                    <table class="table table-sm table-bordered small">
+                                        <tbody id="custModalSpecs"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- Order Button -->
+                            <div class="mt-3 d-grid">
+                                <button class="btn text-white rounded-pill py-2 fw-bold" style="background:linear-gradient(135deg,#00838f,var(--cust-primary));" onclick="openCustOrderModal()">
+                                    <i class="fas fa-shopping-cart me-2"></i>Place Order
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Customer Place Order Modal -->
+    <div class="modal fade" id="custOrderModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered" style="max-width:440px;">
+            <div class="modal-content border-0 shadow-lg rounded-4">
+                <div class="modal-header border-0" style="background:linear-gradient(135deg,#00838f,var(--cust-primary));border-radius:16px 16px 0 0;">
+                    <h5 class="modal-title text-white fw-bold"><i class="fas fa-shopping-cart me-2"></i>Place Order</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="d-flex align-items-center gap-3 mb-4 p-3 rounded-3" style="background:var(--cust-secondary);">
+                        <img id="custOrderProductImg" src="" alt="" style="width:56px;height:56px;object-fit:contain;border-radius:8px;background:white;padding:4px;">
+                        <div>
+                            <div class="fw-bold" id="custOrderProductName">Product</div>
+                            <div class="small text-muted" id="custOrderProductModel"></div>
+                            <div class="fw-bold" style="color:var(--cust-primary);" id="custOrderProductPrice">₹0</div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Quantity</label>
+                        <div class="d-flex align-items-center gap-3">
+                            <button class="btn btn-sm rounded-3" style="background:var(--cust-secondary);color:var(--cust-primary);width:36px;height:36px;" onclick="custOrderQtyChange(-1)">−</button>
+                            <input type="number" id="custOrderQty" class="form-control text-center fw-bold" value="1" min="1" style="width:70px;">
+                            <button class="btn btn-sm rounded-3" style="background:var(--cust-secondary);color:var(--cust-primary);width:36px;height:36px;" onclick="custOrderQtyChange(1)">+</button>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Delivery Address</label>
+                        <textarea class="form-control" id="custOrderAddress" rows="2" placeholder="Enter delivery address..."></textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Additional Notes (Optional)</label>
+                        <input type="text" class="form-control" id="custOrderNotes" placeholder="Special instructions...">
+                    </div>
+
+                    <div class="d-flex align-items-center justify-content-between mb-1">
+                        <span class="text-muted small">Subtotal</span>
+                        <span class="fw-bold" id="custOrderSubtotal">₹0</span>
+                    </div>
+
+                    <button class="btn text-white w-100 rounded-pill py-2 fw-bold mt-3" style="background:linear-gradient(135deg,#00838f,var(--cust-primary));" onclick="submitCustOrder()" id="custOrderSubmitBtn">
+                        <i class="fas fa-paper-plane me-2"></i>Submit Order Request
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scanner Modal -->
+    <div class="modal fade" id="scannerModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content rounded-4 border-0 shadow">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="modal-title fw-bold"><i class="fas fa-qrcode me-2 text-info"></i>Scan QR / Barcode</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" onclick="stopScanner()"></button>
+                </div>
+                <div class="modal-body text-center p-3">
+                    <div id="reader" class="mb-3"></div>
+                    <p class="small text-muted mb-3">Point your camera at the product QR code or upload from gallery.</p>
+                    <button class="btn btn-outline-secondary w-100 rounded-pill" onclick="stopScanner()"><i class="fas fa-times me-2"></i>Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom Navigation (Mobile Only) -->
+    <nav class="bottom-nav">
+        <div class="bottom-nav-item active" data-target="dashboard" onclick="switchTab('v-pills-dashboard-tab', this)">
+            <i class="fas fa-home"></i>
+            <span>Home</span>
+        </div>
+        <div class="bottom-nav-item" data-target="orders" onclick="switchTab('v-pills-products-tab', this)">
+            <i class="fas fa-box"></i>
+            <span>Orders</span>
+        </div>
+        <div class="bottom-nav-item" data-target="complaints" onclick="switchTab('v-pills-complaint-tab', this)">
+            <i class="fas fa-tools"></i>
+            <span>Service</span>
+        </div>
+        <div class="bottom-nav-item position-relative" data-target="chat" onclick="switchTab('v-pills-chat-tab', this)">
+            <i class="fas fa-comments"></i>
+            <span>Chat</span>
+            <span class="position-absolute top-0 start-50 translate-middle p-1 bg-danger border border-light rounded-circle">
+                <span class="visually-hidden">New alerts</span>
+            </span>
+        </div>
+    </nav>
+
+    <?!= include('shared_scripts.js'); ?>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    
+    <script>
+        let html5QrcodeScanner = null;
+        let scannerTargetId = null;
+        
+        let userMobile = '';
+        let userName = 'Customer';
+        try {
+            userMobile = localStorage.getItem('vvarma_user_mobile') || '';
+            userName = localStorage.getItem('vvarma_user_name') || 'Customer';
+        } catch(e) {
+            console.warn('LocalStorage access denied', e);
+        }
+
+        // Global Local Database Cache
+        const customerDashboardCachedData = {
+            warranties: [],
+            complaints: [],
+            catalog: [],
+            profile: {}
+        };
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            let role = null;
+            try {
+                role = localStorage.getItem('vvarma_role');
+            } catch(e) {
+                console.warn('LocalStorage access denied', e);
+            }
+            
+            if (role !== 'customer') {
+                try {
+                    window.top.location.href = '<?= appUrl ?>?page=login&role=customer';
+                } catch(e) {
+                    window.location.search = '?page=login&role=customer';
+                }
+                return;
+            }
+            
+            document.getElementById('sidebarCustName').innerText = userName;
+            document.getElementById('custMobile').value = userMobile;
+            document.getElementById('custName').value = userName;
+            // Populate profile view fields with localStorage data as initial state
+            document.getElementById('profileViewName').textContent = userName || '—';
+            document.getElementById('profileViewMobile').textContent = userMobile || '—';
+            // Update avatars with name
+            const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(userName||'C')}&background=00bcd4&color=fff&size=80`;
+            document.getElementById('sidebarProfileImg').src = avatarUrl;
+            document.getElementById('headerProfileImg').src = `https://ui-avatars.com/api/?name=${encodeURIComponent(userName||'C')}&background=00bcd4&color=fff&size=60`;
+
+            const options = { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' };
+            document.getElementById('currentDate').innerText = new Date().toLocaleDateString('en-US', options);
+            
+            loadCustDashboardData();
+            loadCustomerProfile();
+            loadCustomerNotifications();
+            
+            // Fetch catalog items to enable global search filtering and inline display
+            google.script.run
+                .withSuccessHandler(function(res) {
+                    customerDashboardCachedData.catalog = res || [];
+                    renderInlineCatalog();
+                })
+                .getPublicCatalogProducts();
+            
+            // Close sidebar on link click in mobile
+            document.querySelectorAll('#sidebar .nav-link').forEach(link => {
+                link.addEventListener('click', () => {
+                    if (window.innerWidth < 992) {
+                        document.getElementById('sidebar').classList.remove('show');
+                    }
+                });
+            });
+
+            // Serial Verification Logic
+            document.getElementById('custCompSerial').addEventListener('input', function(e) {
+                const val = e.target.value;
+                const statusDiv = document.getElementById('serialVerifyStatus');
+                if(val.length > 4) {
+                    statusDiv.innerHTML = '<span class="text-success"><i class="fas fa-check-circle me-1"></i>Warranty Active</span>';
+                } else {
+                    statusDiv.innerHTML = '';
+                }
+            });
+
+            // Close notification dropdown when clicking outside
+            document.addEventListener('click', (e) => {
+                const dropdown = document.getElementById('notificationDropdown');
+                const isBtn = e.target.closest('.header-icon-btn') || e.target.closest('#notificationDropdown');
+                if (dropdown && !dropdown.classList.contains('d-none') && !isBtn) {
+                    dropdown.classList.add('d-none');
+                }
+            });
+        });
+
+        // Toggle Sidebar Navigation (Both Desktop and Mobile Viewports)
+        function toggleSidebar() {
+            if (window.innerWidth < 992) {
+                document.getElementById('sidebar').classList.toggle('show');
+            } else {
+                document.body.classList.toggle('sidebar-collapsed');
+            }
+        }
+
+        // Bottom Nav Logic
+        function switchTab(tabId, element) {
+            document.getElementById(tabId).click();
+            document.querySelectorAll('.bottom-nav-item').forEach(el => el.classList.remove('active'));
+            element.classList.add('active');
+        }
+
+        function setActiveNav(target) {
+            if(window.innerWidth < 992) {
+                document.querySelectorAll('.bottom-nav-item').forEach(el => el.classList.remove('active'));
+                const item = document.querySelector(`.bottom-nav-item[data-target="${target}"]`);
+                if(item) item.classList.add('active');
+            }
+        }
+
+        // Global Search Logic
+        function triggerGlobalSearch(query) {
+            const resultsPanel = document.getElementById('globalSearchResults');
+            const resultsBody = document.getElementById('searchResultsBody');
+            const clearBtn = document.getElementById('clearSearchBtn');
+            
+            query = query.trim().toLowerCase();
+            
+            if (!query) {
+                resultsPanel.classList.add('d-none');
+                clearBtn.style.display = 'none';
+                return;
+            }
+            
+            clearBtn.style.display = 'inline-block';
+            resultsPanel.classList.remove('d-none');
+            
+            // Search cached data
+            const matchedProducts = customerDashboardCachedData.warranties.filter(w => 
+                String(w['Product Model'] || '').toLowerCase().includes(query) ||
+                String(w['Part Number'] || '').toLowerCase().includes(query) ||
+                String(w['Serial Number'] || '').toLowerCase().includes(query)
+            );
+            
+            const matchedComplaints = customerDashboardCachedData.complaints.filter(c => 
+                String(c['Complaint ID'] || '').toLowerCase().includes(query) ||
+                String(c['Product Model'] || '').toLowerCase().includes(query) ||
+                String(c['Status'] || '').toLowerCase().includes(query) ||
+                String(c['Technician Remarks'] || '').toLowerCase().includes(query)
+            );
+            
+            const matchedCatalog = customerDashboardCachedData.catalog.filter(p => 
+                String(p.name || p.Name || p['Product Model'] || '').toLowerCase().includes(query) ||
+                String(p.description || p.Description || '').toLowerCase().includes(query) ||
+                String(p.category || p.Category || '').toLowerCase().includes(query)
+            );
+            
+            const profile = customerDashboardCachedData.profile || {};
+            const matchedProfile = [];
+            if(Object.keys(profile).length > 0) {
+                const matchesProfile = Object.values(profile).some(val => String(val).toLowerCase().includes(query));
+                if (matchesProfile) {
+                    matchedProfile.push(profile);
+                }
+            }
+            
+            let html = '';
+            
+            // 1. Render matched products
+            if (matchedProducts.length > 0) {
+                html += `<div class="search-category-header"><i class="fas fa-box me-1"></i>My Products & Orders (${matchedProducts.length})</div>`;
+                matchedProducts.forEach(w => {
+                    html += `
+                    <div class="search-result-item" onclick="navigateToItem('products', '${w['Part Number'] || w['Serial Number']}')">
+                        <div class="search-result-icon"><i class="fas fa-box"></i></div>
+                        <div>
+                            <div class="fw-bold small">${w['Product Model']}</div>
+                            <div class="text-muted" style="font-size: 11.5px;">Serial: ${w['Part Number'] || 'N/A'} | Purchased: ${w['Registration Date'] ? new Date(w['Registration Date']).toLocaleDateString() : ''}</div>
+                        </div>
+                    </div>`;
+                });
+            }
+            
+            // 2. Render matched complaints
+            if (matchedComplaints.length > 0) {
+                html += `<div class="search-category-header"><i class="fas fa-tools me-1"></i>Complaints & Service (${matchedComplaints.length})</div>`;
+                matchedComplaints.forEach(c => {
+                    html += `
+                    <div class="search-result-item" onclick="navigateToItem('complaints', '${c['Complaint ID']}')">
+                        <div class="search-result-icon text-warning" style="background: rgba(255, 193, 7, 0.1);"><i class="fas fa-tools"></i></div>
+                        <div>
+                            <div class="fw-bold small">${c['Complaint ID']} - ${c['Product Model']}</div>
+                            <div class="text-muted" style="font-size: 11.5px;">Status: <span class="badge bg-secondary py-1" style="font-size: 9.2px;">${c['Status']}</span> | Date: ${c['Complaint Date'] ? new Date(c['Complaint Date']).toLocaleDateString() : ''}</div>
+                        </div>
+                    </div>`;
+                });
+            }
+            
+            // 3. Render matched catalog
+            if (matchedCatalog.length > 0) {
+                html += `<div class="search-category-header"><i class="fas fa-shopping-cart me-1"></i>Product Catalog (${matchedCatalog.length})</div>`;
+                matchedCatalog.forEach(p => {
+                    html += `
+                    <div class="search-result-item" onclick="navigateToItem('catalog', '${p.name || p.Name || p['Product Model']}')">
+                        <div class="search-result-icon text-success" style="background: rgba(40, 167, 69, 0.1);"><i class="fas fa-shopping-cart"></i></div>
+                        <div>
+                            <div class="fw-bold small">${p.name || p.Name || p['Product Model']}</div>
+                            <div class="text-muted" style="font-size: 11.5px;">Category: ${p.category || p.Category || 'General'}</div>
+                        </div>
+                    </div>`;
+                });
+            }
+            
+            // 4. Render matched profile
+            if (matchedProfile.length > 0) {
+                html += `<div class="search-category-header"><i class="fas fa-user-circle me-1"></i>Profile Match</div>`;
+                matchedProfile.forEach(p => {
+                    html += `
+                    <div class="search-result-item" onclick="navigateToItem('profile')">
+                        <div class="search-result-icon text-info" style="background: rgba(23, 162, 184, 0.1);"><i class="fas fa-user"></i></div>
+                        <div>
+                            <div class="fw-bold small">${p['Name'] || p['Customer Name'] || userName}</div>
+                            <div class="text-muted" style="font-size: 11.5px;">Email: ${p['Email'] || 'N/A'} | Pin: ${p['Pin Code'] || p['Pincode'] || 'N/A'}</div>
+                        </div>
+                    </div>`;
+                });
+            }
+            
+            if (!html) {
+                html = '<div class="text-center py-4 text-muted small"><i class="fas fa-search-minus fa-2x mb-2 d-block opacity-50"></i>No matching records found.</div>';
+            }
+            
+            resultsBody.innerHTML = html;
+        }
+
+        function navigateToItem(category, itemId) {
+            closeSearchResults();
+            
+            if (category === 'products') {
+                document.getElementById('v-pills-products-tab').click();
+                setTimeout(() => {
+                    const cards = document.querySelectorAll('#custProductsGrid .glass-card');
+                    cards.forEach(card => {
+                        const text = card.innerText.toLowerCase();
+                        if (text.includes(itemId.toLowerCase())) {
+                            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            card.classList.add('border-info', 'shadow-lg');
+                            card.style.transform = 'scale(1.03)';
+                            setTimeout(() => {
+                                card.style.transform = '';
+                                card.classList.remove('border-info', 'shadow-lg');
+                            }, 3000);
+                        }
+                    });
+                }, 800);
+            } 
+            else if (category === 'complaints') {
+                document.getElementById('v-pills-complaint-tab').click();
+                document.getElementById('history-tab').click();
+                setTimeout(() => {
+                    const rows = document.querySelectorAll('#custComplaintsBody tr');
+                    rows.forEach(row => {
+                        const text = row.innerText.toLowerCase();
+                        if (text.includes(itemId.toLowerCase())) {
+                            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            row.style.background = 'rgba(216, 27, 96, 0.15)';
+                            setTimeout(() => {
+                                row.style.background = '';
+                            }, 3000);
+                        }
+                    });
+                }, 800);
+            }
+            else if (category === 'catalog') {
+                document.getElementById('v-pills-catalog-tab').click();
+            }
+            else if (category === 'profile') {
+                document.getElementById('v-pills-profile-tab').click();
+            }
+        }
+
+        function clearGlobalSearch() {
+            const input = document.getElementById('globalSearchInput');
+            input.value = '';
+            triggerGlobalSearch('');
+        }
+
+        function closeSearchResults() {
+            const resultsPanel = document.getElementById('globalSearchResults');
+            resultsPanel.classList.add('d-none');
+        }
+
+        // Live Notifications Dropdown Logic
+        function toggleNotificationsDropdown(e) {
+            if(e) e.stopPropagation();
+            const dropdown = document.getElementById('notificationDropdown');
+            const isHidden = dropdown.classList.contains('d-none');
+            
+            closeSearchResults();
+            
+            if(isHidden) {
+                dropdown.classList.remove('d-none');
+                loadCustomerNotifications();
+            } else {
+                dropdown.classList.add('d-none');
+            }
+        }
+
+        function loadCustomerNotifications() {
+            google.script.run
+                .withSuccessHandler(function(res) {
+                    if (res && res.success && res.data) {
+                        const notifications = res.data;
+                        const badge = document.getElementById('notificationBadge');
+                        const listBody = document.getElementById('notificationListBody');
+                        
+                        const unreadList = notifications.filter(n => n['Status'] !== 'Read');
+                        badge.innerText = unreadList.length;
+                        if(unreadList.length > 0) {
+                            badge.style.display = 'inline-block';
+                        } else {
+                            badge.style.display = 'none';
+                        }
+                        
+                        if (notifications.length === 0) {
+                            listBody.innerHTML = '<div class="text-center py-4 text-muted small">No new notifications.</div>';
+                            return;
+                        }
+                        
+                        let html = '';
+                        notifications.forEach(n => {
+                            const isRead = n['Status'] === 'Read';
+                            html += `
+                            <div class="p-2 rounded mb-2 border-bottom position-relative notification-item ${isRead ? 'opacity-60' : 'bg-info bg-opacity-5'}" style="transition: all 0.2s;">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <span class="fw-bold small text-dark d-flex align-items-center" style="font-size: 13.2px;">
+                                        ${!isRead ? '<span class="d-inline-block rounded-circle bg-info me-2" style="width: 6px; height: 6px;"></span>' : ''}
+                                        ${n['Title'] || 'System Alert'}
+                                    </span>
+                                    <small class="text-muted" style="font-size: 10.9px;">${n['Date'] ? new Date(n['Date']).toLocaleDateString() : ''}</small>
+                                </div>
+                                <p class="mb-1 text-muted small mt-1" style="font-size: 12.6px; line-height: 1.4;">${n['Message'] || n['Message Text'] || ''}</p>
+                                ${!isRead ? `
+                                <div class="text-end">
+                                    <button class="btn btn-link btn-sm p-0 text-decoration-none text-info" style="font-size: 11.5px;" onclick="markSingleNotificationRead('${n['Notification ID']}', event)">
+                                        <i class="fas fa-check me-1"></i>Mark Read
+                                    </button>
+                                </div>
+                                ` : ''}
+                            </div>
+                            `;
+                        });
+                        listBody.innerHTML = html;
+                    }
+                })
+                .getLiveNotifications('customer', userMobile);
+        }
+
+        function markSingleNotificationRead(notifId, e) {
+            if(e) e.stopPropagation();
+            google.script.run
+                .withSuccessHandler(function(res) {
+                    if(res && res.success) {
+                        loadCustomerNotifications();
+                    }
+                })
+                .markNotificationRead(notifId);
+        }
+
+        function markAllNotificationsAsRead(e) {
+            if(e) e.stopPropagation();
+            google.script.run
+                .withSuccessHandler(function(res) {
+                    if(res && res.success && res.data) {
+                        const unread = res.data.filter(n => n['Status'] !== 'Read');
+                        if(unread.length === 0) {
+                            alert('All notifications are already read!');
+                            return;
+                        }
+                        
+                        let completedCount = 0;
+                        unread.forEach(n => {
+                            google.script.run
+                                .withSuccessHandler(function() {
+                                    completedCount++;
+                                    if (completedCount === unread.length) {
+                                        loadCustomerNotifications();
+                                    }
+                                })
+                                .markNotificationRead(n['Notification ID']);
+                        });
+                    }
+                })
+                .getLiveNotifications('customer', userMobile);
+        }
+
+        // Profile Loading from Sheets Database
+        let profileLoaded = false;
+        function loadCustomerProfile() {
+            google.script.run
+                .withSuccessHandler(function(res) {
+                    if (res && res.success && res.data && res.data.profile) {
+                        const profile = res.data.profile;
+                        customerDashboardCachedData.profile = profile;
+                        profileLoaded = true;
+
+                        const name = profile['Name'] || profile['Customer Name'] || userName;
+                        const email = profile['Email'] || profile['Email Address'] || '';
+                        const pin = profile['Pin Code'] || profile['Pincode'] || profile['Pin'] || '';
+                        const address = profile['Address'] || profile['Complete Address'] || '';
+                        const photo = profile['Photo URL'] || profile['photo_url'] || '';
+                        const since = profile['Added Date'] || profile['Registration Date'] || profile['Created Date'] || '';
+
+                        // Update form inputs
+                        document.getElementById('custName').value = name;
+                        document.getElementById('custMobile').value = userMobile;
+                        document.getElementById('custEmail').value = email;
+                        document.getElementById('custPin').value = pin;
+                        document.getElementById('custAddress').value = address;
+
+                        // Update VIEW mode
+                        document.getElementById('profileViewName').textContent = name;
+                        document.getElementById('profileViewMobile').textContent = userMobile;
+                        document.getElementById('profileViewEmail').textContent = email || '(Not set)';
+                        document.getElementById('profileViewPin').textContent = pin || '(Not set)';
+                        document.getElementById('profileViewAddress').textContent = address || '(Not set)';
+                        document.getElementById('profileViewSince').textContent = since ? new Date(since).toLocaleDateString('en-IN', {day:'numeric',month:'long',year:'numeric'}) : '—';
+
+                        // Sidebar name
+                        document.getElementById('sidebarCustName').innerText = name;
+
+                        // Photos
+                        if (photo) {
+                            ['sidebarProfileImg','profileViewPhoto','profileEditPhoto','headerProfileImg'].forEach(id => {
+                                const el = document.getElementById(id);
+                                if (el) el.src = photo;
+                            });
+                        } else {
+                            const av = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=00bcd4&color=fff&size=120`;
+                            document.getElementById('profileViewPhoto').src = av;
+                            document.getElementById('profileEditPhoto').src = av;
+                            document.getElementById('sidebarProfileImg').src = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=00bcd4&color=fff&size=80`;
+                            document.getElementById('headerProfileImg').src = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=00bcd4&color=fff&size=60`;
+                        }
+                    }
+                })
+                .getDashboardAnalytics('customer', userMobile);
+        }
+
+        function showProfileTab() {
+            document.getElementById('v-pills-profile-tab').click();
+            if (!profileLoaded) loadCustomerProfile();
+        }
+
+        function toggleProfileEditMode() {
+            const viewMode = document.getElementById('profileViewMode');
+            const editMode = document.getElementById('profileEditMode');
+            const btn = document.getElementById('profileEditToggleBtn');
+            const isEditing = editMode.style.display !== 'none';
+            if (isEditing) {
+                editMode.style.display = 'none';
+                viewMode.style.display = '';
+                btn.innerHTML = '<i class="fas fa-pen me-1"></i>Edit Profile';
+            } else {
+                editMode.style.display = '';
+                viewMode.style.display = 'none';
+                btn.innerHTML = '<i class="fas fa-times me-1"></i>Cancel Edit';
+            }
+        }
+
+        function previewProfilePhoto(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = e => {
+                const src = e.target.result;
+                document.getElementById('profileEditPhoto').src = src;
+                document.getElementById('profileViewPhoto').src = src;
+                document.getElementById('sidebarProfileImg').src = src;
+                document.getElementById('headerProfileImg').src = src;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // Dashboard Data Loading
+        function loadCustDashboardData() {
+            google.script.run
+                .withSuccessHandler(function(res) {
+                    if (res && res.success) {
+                        customerDashboardCachedData.warranties = res.data.warranties || [];
+                        customerDashboardCachedData.complaints = res.data.complaints || [];
+
+                        if(res.data && res.data.logoUrl) {
+                            const logoImg = document.getElementById('headerLogo');
+                            if(logoImg) {
+                                logoImg.src = res.data.logoUrl;
+                                logoImg.style.display = 'inline-block';
+                            }
+                        }
+
+                        document.getElementById('stat-products').innerText = res.data.warranties ? res.data.warranties.length : 0;
+                        const activeC = (res.data.complaints || []).filter(c => c['Status'] !== 'Completed');
+                        document.getElementById('stat-complaints').innerText = activeC.length;
+                    }
+                })
+                .getRoleSpecificData('customer', userMobile);
+        }
+
+        function loadCustomerProducts() {
+            google.script.run
+                .withSuccessHandler(function(res) {
+                    const grid = document.getElementById('custProductsGrid');
+                    if (!res || !res.data || !res.data.warranties || res.data.warranties.length === 0) {
+                        grid.innerHTML = '<div class="col-12 text-center py-5"><h5 class="text-muted fw-bold mb-3">Order Status: Nil</h5><p class="text-muted">No registered products found.</p></div>';
+                        return;
+                    }
+                    let html = '';
+                    res.data.warranties.forEach(w => {
+                        let active = (new Date(w['Warranty End Date']) > new Date());
+                        
+                        // Parse invoice number from remarks
+                        let match = String(w['Remarks'] || '').match(/Invoice Number:\s*(\S+)/);
+                        let invNum = match ? match[1] : '';
+                        
+                        html += `
+                        <div class="col-md-6 col-lg-4">
+                            <div class="glass-card p-3 h-100 position-relative border-top-0 border-end-0 border-bottom-0" style="border-left: 4px solid ${active ? '#20c997' : '#dc3545'};">
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="badge bg-${active ? 'success' : 'danger'} rounded-pill">${active ? 'Warranty Active' : 'Expired'}</span>
+                                    ${invNum ? `<button class="btn btn-sm btn-light rounded-circle shadow-sm" onclick="downloadInvoice('${invNum}')" title="Download Invoice"><i class="fas fa-file-download text-info"></i></button>` : ''}
+                                </div>
+                                <h5 class="fw-bold mt-3">${w['Product Model']}</h5>
+                                <p class="small text-muted mb-1">Order Status: <span class="fw-bold text-${active ? 'success' : 'secondary'}">${active ? 'Available' : 'Nil'}</span></p>
+                                <p class="small text-muted mb-1">Serial: ${w['Part Number'] || 'N/A'}</p>
+                                <p class="small text-muted mb-3">Purchased: ${new Date(w['Registration Date']).toLocaleDateString()}</p>
+                                
+                                <div class="mt-3 pt-3 border-top">
+                                    <div class="d-flex justify-content-between mb-1">
+                                        <small class="fw-bold">Warranty Progress</small>
+                                        <small>${active ? 'Active' : 'Ended'}</small>
+                                    </div>
+                                    <div class="progress" style="height: 6px;">
+                                        <div class="progress-bar bg-${active ? 'success' : 'danger'}" role="progressbar" style="width: ${active ? '50%' : '100%'}"></div>
+                                    </div>
+                                </div>
+                                
+                                <div class="mt-4 d-flex gap-2">
+                                    <button class="btn btn-sm btn-outline-info flex-grow-1 rounded-pill" onclick="switchTab('v-pills-complaint-tab', document.querySelector('.bottom-nav-item[data-target=\\'complaints\\']')); document.getElementById('custCompSerial').value = '${w['Part Number']}';">Book Service</button>
+                                </div>
+                            </div>
+                        </div>`;
+                    });
+                    grid.innerHTML = html;
+                })
+                .getRoleSpecificData('customer', userMobile);
+        }
+
+        function loadCustomerComplaints() {
+            google.script.run
+                .withSuccessHandler(function(res) {
+                    const tbody = document.getElementById('custComplaintsBody');
+                    if (!res || !res.data || !res.data.complaints || res.data.complaints.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="4" class="text-center py-4 text-muted">No service history found.</td></tr>';
+                        return;
+                    }
+                    let html = '';
+                    res.data.complaints.forEach(c => {
+                        const isCompleted = c['Status'] === 'Completed';
+                        html += `
+                        <tr>
+                            <td class="fw-bold small text-info">${c['Complaint ID'] || 'N/A'}</td>
+                            <td>
+                                <p class="mb-0 fw-bold small">${c['Title'] || c['Product Name'] || 'N/A'}</p>
+                                <small class="text-muted">${c['Complaint Date'] ? new Date(c['Complaint Date']).toLocaleDateString() : ''}</small>
+                            </td>
+                            <td>
+                                <span class="d-block small">${c['Model Name'] || c['Product Model'] || 'N/A'}</span>
+                                <small class="text-muted">${c['Model Number'] || ''}</small>
+                            </td>
+                            <td>
+                                <span class="d-block small">${c['Serial Number'] || 'N/A'}</span>
+                                <small class="text-muted">${c['Part Number'] || ''}</small>
+                            </td>
+                            <td><span class="badge bg-${c['Warranty Status'] === 'Active' ? 'success' : 'secondary'} rounded-pill">${c['Warranty Status'] || 'Unknown'}</span></td>
+                            <td class="small">${c['Warranty Start Date'] ? new Date(c['Warranty Start Date']).toLocaleDateString() : 'N/A'}</td>
+                            <td class="small">${c['Warranty End Date'] ? new Date(c['Warranty End Date']).toLocaleDateString() : 'N/A'}</td>
+                            <td><span class="badge bg-${isCompleted ? 'success' : 'warning'} rounded-pill">${c['Status'] || 'Unknown'}</span></td>
+                            <td>
+                                <div class="d-flex gap-1 flex-column">
+                                    <button class="btn btn-sm btn-outline-primary rounded-pill mb-1" onclick="alert('Viewing details for ${c['Complaint ID']}')">View</button>
+                                    ${isCompleted 
+                                      ? `<button class="btn btn-sm btn-outline-secondary rounded-pill" onclick="alert('Reopen request initiated.')">Reopen</button>` 
+                                      : `<button class="btn btn-sm btn-info text-white rounded-pill" onclick="switchTab('v-pills-chat-tab', document.querySelector('.bottom-nav-item[data-target=\\'chat\\']'))">Chat</button>`}
+                                </div>
+                            </td>
+                        </tr>`;
+                    });
+                    tbody.innerHTML = html;
+                })
+                .getRoleSpecificData('customer', userMobile);
+        }
+
+        // Real Database Save Profile Connected to Sheet Backend
+        function submitCustProfileEdit(e) {
+            e.preventDefault();
+            const btn = document.getElementById('btnUpdateCustProfile');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
+            btn.disabled = true;
+            
+            const updatedName = document.getElementById('custName').value.trim();
+            const updatedEmail = document.getElementById('custEmail').value.trim();
+            const updatedPin = document.getElementById('custPin').value.trim();
+            const updatedAddress = document.getElementById('custAddress').value.trim();
+            
+            const cachedProfile = customerDashboardCachedData.profile || {};
+            const payload = {};
+            
+            const nameKey = Object.keys(cachedProfile).find(k => k.toLowerCase() === 'name') || 'Name';
+            const emailKey = Object.keys(cachedProfile).find(k => k.toLowerCase() === 'email' || k.toLowerCase() === 'email address') || 'Email';
+            const pinKey = Object.keys(cachedProfile).find(k => k.toLowerCase() === 'pin code' || k.toLowerCase() === 'pincode' || k.toLowerCase() === 'pin') || 'Pin Code';
+            const addressKey = Object.keys(cachedProfile).find(k => k.toLowerCase() === 'address' || k.toLowerCase() === 'complete address') || 'Address';
+            
+            payload[nameKey] = updatedName;
+            payload[emailKey] = updatedEmail;
+            payload[pinKey] = updatedPin;
+            payload[addressKey] = updatedAddress;
+            
+            google.script.run
+                .withSuccessHandler(function(res) {
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                    if (res && res.success) {
+                        alert('Profile updated successfully!');
+                        localStorage.setItem('vvarma_user_name', updatedName);
+                        document.getElementById('sidebarCustName').innerText = updatedName;
+                        loadCustomerProfile();
+                    } else {
+                        alert('Error updating profile: ' + (res ? res.message : 'Unknown error'));
+                    }
+                })
+                .updateCustomerProfile(userMobile, payload);
+        }
+
+        function submitCustComplaint(e) {
+            e.preventDefault();
+            alert('Service request booked! Technician will be assigned shortly.');
+            document.getElementById('custCompSerial').value = '';
+            document.getElementById('custCompIssueType').value = '';
+            document.getElementById('custCompIssue').value = '';
+            document.getElementById('serialVerifyStatus').innerHTML = '';
+            document.getElementById('history-tab').click();
+            loadCustomerComplaints();
+        }
+
+        // Scanner Logic
+        let scannerModalInstance = null;
+        function openGlobalScanner(targetId = null) {
+            if (!scannerModalInstance) {
+                scannerModalInstance = new bootstrap.Modal(document.getElementById('scannerModal'));
+            }
+            scannerTargetId = targetId;
+            scannerModalInstance.show();
+            setTimeout(() => {
+                document.getElementById('reader').innerHTML = '';
+                html5QrcodeScanner = new Html5QrcodeScanner("reader", { 
+                    fps: 10, 
+                    qrbox: {width: 250, height: 250},
+                    supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA, Html5QrcodeScanType.SCAN_TYPE_FILE]
+                });
+                html5QrcodeScanner.render((decodedText) => {
+                    html5QrcodeScanner.clear();
+                    scannerModalInstance.hide();
+                    if(scannerTargetId) {
+                        const target = document.getElementById(scannerTargetId);
+                        if(target) {
+                            target.value = decodedText;
+                            target.dispatchEvent(new Event('input'));
+                        }
+                    } else {
+                        const globalInput = document.getElementById('globalSearchInput');
+                        if (globalInput) {
+                            globalInput.value = decodedText;
+                            triggerGlobalSearch(decodedText);
+                        }
+                    }
+                }, (error) => {});
+            }, 300);
+        }
+        function stopScanner() {
+            if(html5QrcodeScanner) { html5QrcodeScanner.clear(); }
+        }
+
+        // ============================================================
+        // INLINE CATALOG (Full public catalog UI embedded)
+        // ============================================================
+        let custCatalogAllProducts = [];
+        let custCurrentProduct = null;
+        let custCurrentImgIdx = 0;
+        let custCurrentImgs = [];
+        let custActiveCategory = 'All';
+
+        function renderInlineCatalog() {
+            const grid = document.getElementById('inlineCatalogGrid');
+            custCatalogAllProducts = customerDashboardCachedData.catalog || [];
+
+            if (custCatalogAllProducts.length === 0) {
+                grid.innerHTML = '<div class="col-12 text-center py-5"><i class="fas fa-box-open fa-3x text-muted mb-3 d-block"></i><p class="text-muted fw-bold">No products available in catalog.</p></div>';
+                return;
+            }
+
+            // Build category pills
+            const cats = ['All', ...new Set(custCatalogAllProducts.map(p => p['Category'] || p.category || 'General').filter(Boolean))];
+            const pillsEl = document.getElementById('custCategoryPills');
+            if (pillsEl) {
+                pillsEl.innerHTML = cats.map((c, i) => `<span class="badge rounded-pill px-3 py-2 cust-cat-pill ${i===0?'active':''}" onclick="filterCustByCategory('${c}',this)" style="cursor:pointer;${i===0?'background:var(--cust-primary);color:white;':'background:var(--cust-secondary);color:var(--cust-primary);'}">${c}</span>`).join('');
+            }
+
+            renderCustCatalogCards(custCatalogAllProducts);
+        }
+
+        function renderCustCatalogCards(products) {
+            const grid = document.getElementById('inlineCatalogGrid');
+            if (!products || products.length === 0) {
+                grid.innerHTML = '<div class="col-12 text-center py-5"><p class="text-muted">No products match your search.</p></div>';
+                return;
+            }
+            grid.innerHTML = products.map(p => {
+                const pid = p['Product ID'] || p['Model Number'] || Math.random().toString(36).substr(2);
+                const name = p['Product Title'] || p['Model Name'] || p['Model Number'] || 'Product';
+                const model = p['Model Number'] || '';
+                const cat = p['Category'] || p.category || 'General';
+                const price = parseFloat(p['Selling Price'] || p['Price'] || p['MRP'] || 0);
+                const mrp = parseFloat(p['MRP'] || 0);
+                const discount = mrp > price && mrp > 0 ? Math.round((1 - price/mrp)*100) : 0;
+
+                // Images array
+                let imgs = [];
+                try { imgs = JSON.parse(p['Images'] || '[]'); } catch(e) { imgs = []; }
+                if (!Array.isArray(imgs) || imgs.length === 0) {
+                    const singleImg = p['Image URL'] || p['imageurl'] || p['ImageUrl'] || '';
+                    if (singleImg) imgs = [singleImg];
+                }
+                const mainImg = imgs[0] || '';
+
+                return `
+                <div class="col-6 col-md-4 col-lg-3">
+                    <div class="glass-card h-100 d-flex flex-column" style="cursor:pointer;overflow:hidden;border-radius:16px;" onclick='openCustProductDetail(${JSON.stringify(p).replace(/"/g,"&quot;")}, "${pid}")'>
+                        <div style="height:160px;background:#f8f9fa;display:flex;align-items:center;justify-content:center;padding:8px;border-radius:16px 16px 0 0;overflow:hidden;">
+                            ${mainImg ? `<img src="${mainImg}" alt="${name}" style="max-width:100%;max-height:100%;object-fit:contain;transition:transform 0.3s;" onmouseover="this.style.transform='scale(1.07)'" onmouseout="this.style.transform='scale(1)'" onerror="this.parentElement.innerHTML='<i class=fas fa-cube fa-3x text-muted></i>'">` : `<i class="fas fa-cube fa-3x text-muted"></i>`}
+                        </div>
+                        <div class="p-3 d-flex flex-column flex-grow-1">
+                            ${discount > 0 ? `<span class="badge bg-danger mb-1" style="font-size:0.65rem;width:fit-content;">${discount}% OFF</span>` : ''}
+                            <div class="fw-bold small mb-1" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;height:2.4rem;">${name}</div>
+                            <div class="text-muted" style="font-size:0.72rem;">${model}</div>
+                            <div class="mt-auto pt-2">
+                                <span class="fw-bold" style="color:var(--cust-primary);font-size:1rem;">₹${price > 0 ? price.toLocaleString('en-IN') : 'Contact Us'}</span>
+                                ${mrp > price ? `<span class="text-muted text-decoration-line-through ms-1" style="font-size:0.78rem;">₹${mrp.toLocaleString('en-IN')}</span>` : ''}
+                            </div>
+                            <button class="btn btn-sm w-100 mt-2 rounded-pill fw-bold" style="background:var(--cust-secondary);color:var(--cust-primary);font-size:0.78rem;" onclick='event.stopPropagation();openCustProductDetail(${JSON.stringify(p).replace(/"/g,"&quot;")}, "${pid}")'>
+                                <i class="fas fa-eye me-1"></i>View Details
+                            </button>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function filterCustCatalog(query) {
+            const q = query.toLowerCase().trim();
+            let filtered = custCatalogAllProducts;
+            if (custActiveCategory !== 'All') {
+                filtered = filtered.filter(p => (p['Category'] || p.category || '').toLowerCase() === custActiveCategory.toLowerCase());
+            }
+            if (q) {
+                filtered = filtered.filter(p =>
+                    (p['Product Title']||'').toLowerCase().includes(q) ||
+                    (p['Model Name']||'').toLowerCase().includes(q) ||
+                    (p['Model Number']||'').toLowerCase().includes(q) ||
+                    (p['Description']||'').toLowerCase().includes(q) ||
+                    (p['Category']||'').toLowerCase().includes(q)
+                );
+            }
+            renderCustCatalogCards(filtered);
+        }
+
+        function filterCustByCategory(cat, el) {
+            custActiveCategory = cat;
+            document.querySelectorAll('.cust-cat-pill').forEach(p => {
+                p.style.background = 'var(--cust-secondary)';
+                p.style.color = 'var(--cust-primary)';
+                p.classList.remove('active');
+            });
+            if (el) {
+                el.style.background = 'var(--cust-primary)';
+                el.style.color = 'white';
+                el.classList.add('active');
+            }
+            const q = document.getElementById('custCatalogSearch')?.value || '';
+            filterCustCatalog(q);
+        }
+
+        function openCustProductDetail(product, pid) {
+            custCurrentProduct = product;
+            custCurrentImgIdx = 0;
+
+            // Parse images
+            custCurrentImgs = [];
+            try { custCurrentImgs = JSON.parse(product['Images'] || '[]'); } catch(e) { custCurrentImgs = []; }
+            if (!Array.isArray(custCurrentImgs) || custCurrentImgs.length === 0) {
+                const si = product['Image URL'] || product['imageurl'] || product['ImageUrl'] || '';
+                custCurrentImgs = si ? [si] : [];
+            }
+
+            const name = product['Product Title'] || product['Model Name'] || 'Product';
+            const cat = product['Category'] || product.category || 'General';
+            const tagline = product['Tagline'] || product['Description'] || '';
+            const desc = product['Description'] || '';
+            const price = parseFloat(product['Selling Price'] || product['Price'] || product['MRP'] || 0);
+            const mrp = parseFloat(product['MRP'] || 0);
+            const discount = mrp > price && mrp > 0 ? Math.round((1 - price/mrp)*100) : 0;
+            const features = product['Features'] || '';
+
+            document.getElementById('custModalTitle').textContent = name;
+            document.getElementById('custModalName').textContent = name;
+            document.getElementById('custModalCat').textContent = cat;
+            document.getElementById('custModalTagline').textContent = tagline;
+            document.getElementById('custModalDesc').textContent = desc;
+            document.getElementById('custModalPrice').textContent = price > 0 ? '₹' + price.toLocaleString('en-IN') : 'Contact Us';
+            document.getElementById('custModalMRP').textContent = mrp > price ? '₹' + mrp.toLocaleString('en-IN') : '';
+            const discEl = document.getElementById('custModalDiscount');
+            if (discount > 0) { discEl.textContent = discount + '% OFF'; discEl.style.display = ''; } else { discEl.style.display = 'none'; }
+
+            // Features
+            let featHtml = '';
+            if (features) {
+                const lines = features.split('\n').filter(Boolean);
+                featHtml = '<ul class="small text-muted ps-3">' + lines.map(l => `<li>${l.replace(/^[-•*]+\s*/,'')}</li>`).join('') + '</ul>';
+            }
+            document.getElementById('custModalFeatures').innerHTML = featHtml;
+
+            // Specs table
+            const specFields = ['Voltage','Amps','Motor Type','Phase','Tank Type','Dry Run Feature','Timers','Warranty','HSN Code','GST Rate','Working Type','Automation Type','Mode of Operation'];
+            let specsHtml = '';
+            specFields.forEach(f => {
+                const val = product[f];
+                if (val && String(val).trim()) specsHtml += `<tr><th style="background:#f8f9fa;width:40%;font-size:0.8rem;">${f}</th><td style="font-size:0.8rem;">${val}</td></tr>`;
+            });
+            if (product['Specs']) {
+                try {
+                    const extraSpecs = JSON.parse(product['Specs']);
+                    Object.entries(extraSpecs).forEach(([k,v]) => { if(v) specsHtml += `<tr><th style="background:#f8f9fa;width:40%;font-size:0.8rem;">${k}</th><td style="font-size:0.8rem;">${v}</td></tr>`; });
+                } catch(e) {}
+            }
+            document.getElementById('custModalSpecs').innerHTML = specsHtml || '<tr><td colspan="2" class="text-muted text-center small">Specs coming soon</td></tr>';
+
+            // Thumbnails
+            const thumbStrip = document.getElementById('custThumbStrip');
+            if (custCurrentImgs.length > 0) {
+                thumbStrip.innerHTML = custCurrentImgs.map((img, i) =>
+                    `<img src="${img}" onclick="custSetMainImg(${i})" style="width:56px;height:56px;object-fit:contain;border:2px solid ${i===0?'var(--cust-primary)':'#e0e0e0'};border-radius:8px;cursor:pointer;padding:3px;background:white;flex-shrink:0;" id="custThumb-${i}" onerror="this.style.display='none'">`
+                ).join('');
+                document.getElementById('custMainImg').src = custCurrentImgs[0];
+                document.getElementById('custImgCounter').textContent = `1/${custCurrentImgs.length}`;
+            } else {
+                thumbStrip.innerHTML = '';
+                document.getElementById('custMainImg').src = 'https://via.placeholder.com/300x300?text=No+Image';
+                document.getElementById('custImgCounter').textContent = '1/1';
+            }
+
+            // Populate order modal defaults
+            document.getElementById('custOrderProductName').textContent = name;
+            document.getElementById('custOrderProductModel').textContent = product['Model Number'] || '';
+            document.getElementById('custOrderProductPrice').textContent = price > 0 ? '₹' + price.toLocaleString('en-IN') : 'Contact Us';
+            document.getElementById('custOrderProductImg').src = custCurrentImgs[0] || 'https://ui-avatars.com/api/?name=P&background=eeeeee&color=333';
+            document.getElementById('custOrderQty').value = 1;
+            document.getElementById('custOrderAddress').value = document.getElementById('custAddress')?.value || '';
+            updateCustOrderSubtotal();
+
+            new bootstrap.Modal(document.getElementById('custProductDetailModal')).show();
+        }
+
+        function custSetMainImg(idx) {
+            if (!custCurrentImgs[idx]) return;
+            custCurrentImgIdx = idx;
+            const img = document.getElementById('custMainImg');
+            img.style.opacity = '0';
+            setTimeout(() => { img.src = custCurrentImgs[idx]; img.style.opacity = '1'; }, 150);
+            document.getElementById('custImgCounter').textContent = `${idx+1}/${custCurrentImgs.length}`;
+            document.querySelectorAll('#custThumbStrip img').forEach((el, i) => {
+                el.style.borderColor = i === idx ? 'var(--cust-primary)' : '#e0e0e0';
+            });
+        }
+
+        function custModalNav(dir) {
+            if (!custCurrentImgs.length) return;
+            custCurrentImgIdx = (custCurrentImgIdx + dir + custCurrentImgs.length) % custCurrentImgs.length;
+            custSetMainImg(custCurrentImgIdx);
+        }
+
+        function openCustOrderModal() {
+            bootstrap.Modal.getInstance(document.getElementById('custProductDetailModal'))?.hide();
+            setTimeout(() => new bootstrap.Modal(document.getElementById('custOrderModal')).show(), 350);
+        }
+
+        function custOrderQtyChange(delta) {
+            const input = document.getElementById('custOrderQty');
+            input.value = Math.max(1, (parseInt(input.value)||1) + delta);
+            updateCustOrderSubtotal();
+        }
+
+        function updateCustOrderSubtotal() {
+            if (!custCurrentProduct) return;
+            const price = parseFloat(custCurrentProduct['Selling Price'] || custCurrentProduct['Price'] || custCurrentProduct['MRP'] || 0);
+            const qty = parseInt(document.getElementById('custOrderQty')?.value || 1);
+            const subtotal = price * qty;
+            const el = document.getElementById('custOrderSubtotal');
+            if (el) el.textContent = price > 0 ? '₹' + subtotal.toLocaleString('en-IN') : 'TBD';
+        }
+
+        function submitCustOrder() {
+            if (!custCurrentProduct) return;
+            const btn = document.getElementById('custOrderSubmitBtn');
+            const orig = btn.innerHTML;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Submitting...';
+            btn.disabled = true;
+
+            const price = parseFloat(custCurrentProduct['Selling Price'] || custCurrentProduct['Price'] || custCurrentProduct['MRP'] || 0);
+            const qty = parseInt(document.getElementById('custOrderQty').value || 1);
+
+            const orderData = {
+                customerName: userName,
+                mobile: userMobile,
+                productId: custCurrentProduct['Product ID'] || '',
+                modelNumber: custCurrentProduct['Model Number'] || '',
+                modelName: custCurrentProduct['Model Name'] || '',
+                productTitle: custCurrentProduct['Product Title'] || custCurrentProduct['Model Name'] || '',
+                partNumber: custCurrentProduct['Part Number'] || '',
+                quantity: qty,
+                price: price,
+                totalAmount: price * qty,
+                address: document.getElementById('custOrderAddress').value,
+                notes: document.getElementById('custOrderNotes').value,
+                orderType: 'Customer',
+                invoiceType: 'B2C',
+                orderStage: 'Order Placed'
+            };
+
+            google.script.run
+                .withSuccessHandler(res => {
+                    btn.innerHTML = orig;
+                    btn.disabled = false;
+                    if (res && res.success) {
+                        bootstrap.Modal.getInstance(document.getElementById('custOrderModal'))?.hide();
+                        alert('Order placed successfully! Order ID: ' + res.orderId + '\nAn admin will review and confirm your order shortly.');
+                        loadCustDashboardData();
+                    } else {
+                        alert('Error: ' + (res?.message || 'Order failed. Please try again.'));
+                    }
+                })
+                .withFailureHandler(err => {
+                    btn.innerHTML = orig;
+                    btn.disabled = false;
+                    alert('Failed to place order: ' + err);
+                })
+                .saveCustomerOrder(orderData);
+        }
+
+        // Chat Logic
+        function sendChatMessage(e) {
+            e.preventDefault();
+            const input = document.getElementById('chatInput');
+            const msg = input.value.trim();
+            if(!msg) return;
+            
+            const area = document.getElementById('chatMessagesArea');
+            area.innerHTML += `<div class="message-bubble message-outgoing shadow-sm">${msg}</div>`;
+            input.value = '';
+            area.scrollTop = area.scrollHeight;
+            
+            setTimeout(() => {
+                area.innerHTML += `<div class="message-bubble message-incoming shadow-sm">We have received your message. An agent will respond shortly.</div>`;
+                area.scrollTop = area.scrollHeight;
+            }, 1500);
+        }
+
+        // WhatsApp Integration
+        function openWhatsApp() {
+            const text = encodeURIComponent(`Hello V-VARMA Support, I am ${userName}. I need assistance.`);
+            window.open(`https://wa.me/919876543210?text=${text}`, '_blank');
+        }
+    </script>
+</body>
+</html>

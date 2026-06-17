@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base target="_top">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>About Us - V-VARMA</title>
+    <!-- Google Fonts Inter, Outfit & Playfair Display -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <?!= include('shared_styles'); ?>
+    <style>
+        :root {
+            --v-orange: #f18912;
+            --v-orange-gradient: linear-gradient(135deg, #f18912 0%, #ff9f43 100%);
+            --v-brown: #3d2b1f;
+            --v-brown-gradient: linear-gradient(135deg, #3d2b1f 0%, #5d4037 100%);
+            --glass-bg: rgba(255, 255, 255, 0.95);
+            --shadow-premium: 0 20px 40px rgba(61, 43, 31, 0.06);
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #fcfbfa; /* Extremely soft, premium off-white/beige tint */
+            color: #3d2b1f;
+        }
+
+        /* Premium Hero Section */
+        .about-hero {
+            background: var(--v-brown-gradient);
+            color: white;
+            padding: 8rem 0 6rem 0;
+            position: relative;
+            overflow: hidden;
+            border-bottom-left-radius: 40px;
+            border-bottom-right-radius: 40px;
+            box-shadow: 0 15px 30px rgba(61, 43, 31, 0.15);
+        }
+
+        .about-hero::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: radial-gradient(circle at 80% 20%, rgba(241, 137, 18, 0.15) 0%, transparent 50%);
+            pointer-events: none;
+        }
+
+        .about-hero h1 {
+            font-family: 'Outfit', sans-serif;
+            font-weight: 800;
+            font-size: 3.5rem;
+            letter-spacing: -1.5px;
+            margin-bottom: 1.5rem;
+            animation: fadeInUp 0.8s ease-out;
+        }
+
+        .about-hero p {
+            font-size: 1.25rem;
+            max-width: 700px;
+            margin: 0 auto;
+            opacity: 0.9;
+            font-weight: 400;
+            line-height: 1.6;
+            animation: fadeInUp 1s ease-out;
+        }
+
+        /* Dynamic Section Layout Styling */
+        .about-section-card {
+            background: white;
+            border-radius: 30px;
+            border: 1px solid rgba(61, 43, 31, 0.05);
+            box-shadow: var(--shadow-premium);
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            overflow: hidden;
+            margin-bottom: 3.5rem;
+        }
+
+        .about-section-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 30px 60px rgba(61, 43, 31, 0.1);
+        }
+
+        .section-image-frame {
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
+            background: #f1f5f9;
+        }
+
+        .section-image-frame img {
+            width: 100%;
+            height: 100%;
+            transition: transform 0.6s cubic-bezier(0.25, 1, 0.5, 1);
+        }
+
+        .about-section-card:hover .section-image-frame img {
+            transform: scale(1.04);
+        }
+
+        .section-title-tag {
+            font-family: 'Outfit', sans-serif;
+            font-weight: 800;
+            margin-bottom: 1.2rem;
+            letter-spacing: -0.5px;
+        }
+
+        /* Animation */
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .fade-in-up {
+            animation: fadeInUp 0.8s ease-out;
+        }
+    </style>
+</head>
+<body>
+
+    <?!= include('navbar'); ?>
+
+    <!-- Gorgeous Hero Header -->
+    <div class="about-hero text-center">
+        <div class="container px-4">
+            <h1>Our Journey & Legacy</h1>
+            <p>Pioneering the smart electrical technology sector with premium automatic level controllers, industrial panel craftsmanship, and reliable home water solutions.</p>
+        </div>
+    </div>
+
+    <!-- Main Content Container -->
+    <div class="container py-5 my-3 px-4">
+        <div id="about-us-content-container" class="fade-in-up">
+            <!-- Loading Spinner -->
+            <div class="text-center py-5">
+                <div class="spinner-border text-orange" style="width: 3rem; height: 3rem;"></div>
+                <p class="mt-3 text-muted fw-bold">Hydrating legacy profile...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- SweetAlert & Dynamic Routing Hooks -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script>
+        function loadAboutUsPage() {
+            const container = document.getElementById('about-us-content-container');
+            if (!container) return;
+            
+            google.script.run
+                .withSuccessHandler(res => {
+                    if (res && res.success && res.data && res.data.length > 0) {
+                        renderAboutSections(res.data);
+                    } else {
+                        container.innerHTML = `
+                            <div class="alert alert-warning text-center rounded-4 border-0 p-4 shadow-sm">
+                                <i class="fas fa-exclamation-triangle fa-2x mb-3 text-warning"></i>
+                                <h5>Profile Data Unavailable</h5>
+                                <p class="mb-0">Unable to load About Us details from the sheet config. Please check again later.</p>
+                            </div>
+                        `;
+                    }
+                })
+                .withFailureHandler(err => {
+                    console.error('Server error rendering About Us page:', err);
+                    container.innerHTML = `
+                        <div class="alert alert-danger text-center rounded-4 border-0 p-4 shadow-sm">
+                            <i class="fas fa-exclamation-circle fa-2x mb-3 text-danger"></i>
+                            <h5>Server Communication Error</h5>
+                            <p class="mb-0">${err.message || 'Unknown network error'}</p>
+                        </div>
+                    `;
+                })
+                .getAboutUsData();
+        }
+
+        function renderAboutSections(sections) {
+            const container = document.getElementById('about-us-content-container');
+            if (!container) return;
+            
+            let html = '';
+            
+            sections.forEach((sec, idx) => {
+                const title = sec.title || '';
+                const content = sec.content || '';
+                const imageUrl = sec.imageUrl || 'https://via.placeholder.com/600x400?text=V-VARMA';
+                
+                const style = sec.style || {};
+                const layout = style.layout || 'left';
+                const font = style.fontFamily || 'Inter';
+                const fontSize = style.fontSize || '1.1rem';
+                const color = style.color || '#3d2b1f';
+                const isItalic = !!style.italic;
+                const isBold = !!style.bold;
+                const imgWidth = style.imgWidth || '33%';
+                const imgHeight = style.imgHeight || '250px';
+                const fitMode = style.fitMode || 'cover';
+                
+                // Font-Family styling mapping
+                let fontCss = `font-family: 'Inter', sans-serif;`;
+                if (font === 'Arial') fontCss = `font-family: Arial, sans-serif;`;
+                else if (font === 'Times New Roman') fontCss = `font-family: 'Times New Roman', Times, serif;`;
+                else if (font === 'Georgia') fontCss = `font-family: Georgia, serif;`;
+                
+                // Construct styles
+                const titleStyle = `color: ${color}; font-size: calc(${fontSize} + 0.5rem); ${fontCss}`;
+                const textStyle = `color: ${color}; font-size: ${fontSize}; font-style: ${isItalic ? 'italic' : 'normal'}; font-weight: ${isBold ? '700' : 'normal'}; line-height: 1.7; ${fontCss}`;
+                
+                // Map frame width to Bootstrap columns
+                let imgCols = 4;
+                if (imgWidth === '25%') imgCols = 3;
+                else if (imgWidth === '50%') imgCols = 6;
+                else if (imgWidth === '100%') imgCols = 12;
+                
+                const textCols = 12 - imgCols;
+                
+                // Frame image size and fit styles
+                const imgFrameStyle = `height: ${imgHeight}; width: 100%;`;
+                const imgFitStyle = `object-fit: ${fitMode}; width: 100%; height: 100%;`;
+                
+                // Section Markup construction based on layout type
+                if (layout === 'left') {
+                    html += `
+                    <div class="about-section-card p-4 p-md-5">
+                        <div class="row align-items-center g-4 g-md-5">
+                            <div class="col-md-${imgCols}">
+                                <div class="section-image-frame" style="${imgFrameStyle}">
+                                    <img src="${imageUrl}" style="${imgFitStyle}" onerror="this.src='https://via.placeholder.com/600x400?text=V-VARMA'">
+                                </div>
+                            </div>
+                            <div class="col-md-${textCols}">
+                                <h2 class="section-title-tag" style="${titleStyle}">${title}</h2>
+                                <p style="${textStyle}">${content.replace(/\n/g, '<br>')}</p>
+                            </div>
+                        </div>
+                    </div>`;
+                } else if (layout === 'right') {
+                    html += `
+                    <div class="about-section-card p-4 p-md-5">
+                        <div class="row align-items-center g-4 g-md-5">
+                            <div class="col-md-${textCols} order-2 order-md-1">
+                                <h2 class="section-title-tag" style="${titleStyle}">${title}</h2>
+                                <p style="${textStyle}">${content.replace(/\n/g, '<br>')}</p>
+                            </div>
+                            <div class="col-md-${imgCols} order-1 order-md-2">
+                                <div class="section-image-frame" style="${imgFrameStyle}">
+                                    <img src="${imageUrl}" style="${imgFitStyle}" onerror="this.src='https://via.placeholder.com/600x400?text=V-VARMA'">
+                                </div>
+                            </div>
+                        </div>
+                    </div>`;
+                } else if (layout === 'top') {
+                    html += `
+                    <div class="about-section-card p-4 p-md-5">
+                        <div class="row g-4 text-center justify-content-center">
+                            <div class="col-md-${imgCols}">
+                                <div class="section-image-frame mx-auto" style="${imgFrameStyle}">
+                                    <img src="${imageUrl}" style="${imgFitStyle}" onerror="this.src='https://via.placeholder.com/600x400?text=V-VARMA'">
+                                </div>
+                            </div>
+                            <div class="col-12 text-start mt-4">
+                                <h2 class="section-title-tag text-center" style="${titleStyle}">${title}</h2>
+                                <p class="text-center" style="${textStyle}">${content.replace(/\n/g, '<br>')}</p>
+                            </div>
+                        </div>
+                    </div>`;
+                } else if (layout === 'full') {
+                    html += `
+                    <div class="about-section-card p-0">
+                        <div class="w-100" style="height: ${imgHeight === 'auto' ? '400px' : imgHeight}; overflow: hidden;">
+                            <img src="${imageUrl}" class="w-100 h-100" style="object-fit: ${fitMode};" onerror="this.src='https://via.placeholder.com/1200x500?text=V-VARMA'">
+                        </div>
+                        ${title ? `
+                        <div class="p-4 p-md-5">
+                            <h2 class="section-title-tag text-center" style="${titleStyle}">${title}</h2>
+                            ${content ? `<p class="text-center mb-0" style="${textStyle}">${content.replace(/\n/g, '<br>')}</p>` : ''}
+                        </div>
+                        ` : ''}
+                    </div>`;
+                }
+            });
+            
+            container.innerHTML = html;
+        }
+
+        // Initialize loading
+        loadAboutUsPage();
+    </script>
+</body>
+</html>

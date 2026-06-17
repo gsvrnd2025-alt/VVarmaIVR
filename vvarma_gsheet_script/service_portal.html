@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base target="_top">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Service Portal - V-VARMA</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <?!= include('shared_styles'); ?>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        .service-portal-bg {
+            background-color: #f8f9fa;
+            background-image: url("https://www.transparenttextures.com/patterns/cubes.png");
+            min-height: 100vh;
+            padding-bottom: 80px;
+        }
+        .portal-main-card {
+            background: white;
+            border-radius: 30px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.1);
+            overflow: hidden;
+            margin-top: 40px;
+            border: 3px solid #cbd5e0;
+        }
+        .portal-header-tabs {
+            display: flex;
+            background: #fff;
+            border-bottom: 1px solid #edf2f7;
+        }
+        .portal-tab-btn {
+            flex: 1;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            font-weight: 700;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            border-bottom: 3px solid transparent;
+        }
+        .portal-tab-btn:hover { background: #f8fafc; }
+        .portal-tab-btn.active {
+            color: var(--orange);
+            border-bottom-color: var(--orange);
+            background: #fff;
+        }
+        .form-content-area {
+            padding: 40px;
+        }
+        .portal-form-title {
+            text-align: center;
+            color: #e11d48;
+            font-weight: 800;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+        }
+        .portal-form-subtitle {
+            text-align: center;
+            color: #64748b;
+            font-size: 0.85rem;
+            margin-bottom: 40px;
+        }
+        .form-label {
+            font-weight: 800;
+            font-size: 0.85rem;
+            color: #0f172a;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+        .form-control, .form-select {
+            border-radius: 10px;
+            border: 2px solid #cbd5e0;
+            padding: 12px 15px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #1e293b;
+        }
+        .form-select {
+            font-weight: 700;
+        }
+        .form-control:focus, .form-select:focus {
+            border-color: var(--orange);
+            box-shadow: 0 0 0 3px rgba(255,107,0,0.1);
+        }
+        .input-group-text {
+            border-radius: 10px;
+            background: #f1f5f9;
+            border: 2px solid #cbd5e0;
+            color: #475569;
+        }
+        .btn-scanner {
+            background: #1e293b;
+            color: white;
+            border: 2px solid #1e293b;
+            border-radius: 10px;
+            padding: 0 15px;
+            transition: all 0.3s ease;
+        }
+        .btn-scanner:hover {
+            background: #334155;
+            color: #38bdf8;
+        }
+        .btn-orange-portal {
+            background: #ff6b00;
+            color: white;
+            font-weight: 700;
+            padding: 12px 35px;
+            border-radius: 10px;
+            border: none;
+            transition: all 0.3s ease;
+        }
+        .btn-orange-portal:hover {
+            background: #e66000;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(255,107,0,0.3);
+        }
+        .section-divider {
+            color: #ff6b00;
+            font-weight: 800;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 30px 0 20px;
+        }
+        .section-divider::after {
+            content: '';
+            flex-grow: 1;
+            height: 1px;
+            background: #e2e8f0;
+        }
+        .file-upload-box {
+            border: 1.5px dashed #cbd5e0;
+            border-radius: 10px;
+            padding: 10px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            cursor: pointer;
+        }
+        .file-upload-icon {
+            width: 40px;
+            height: 40px;
+            background: #fef2f2;
+            color: #e11d48;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+    </style>
+</head>
+<body class="service-portal-bg">
+    <?!= include('navbar'); ?>
+
+    <div class="container">
+        <div class="row justify-content-center">
+            <div class="col-xl-9 col-lg-10">
+                <div class="portal-main-card">
+                    <div class="portal-header-tabs">
+                        <div class="portal-tab-btn active" id="btn-warranty" onclick="switchTab('warranty')">Warranty</div>
+                        <div class="portal-tab-btn" id="btn-complaint" onclick="switchTab('complaint')">Complaint</div>
+                        <div class="portal-tab-btn" id="btn-installation" onclick="switchTab('installation')">Installation</div>
+                    </div>
+
+                    <div class="form-content-area">
+                        <!-- WARRANTY FORM -->
+                        <div id="form-warranty" class="portal-section">
+                            <h3 class="portal-form-title"><i class="fas fa-shield-alt"></i> WARRANTY REGISTRATION</h3>
+                            <p class="portal-form-subtitle">Register your product for 12 months protection</p>
+                            
+                            <form id="warrantyForm">
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">Part Number *</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" id="wPartNo" placeholder="Scan or Enter Part No" required>
+                                            <button class="btn btn-scanner" type="button" onclick="openScanner('wPartNo')"><i class="fas fa-qrcode"></i></button>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Product Model *</label>
+                                        <select class="form-select" id="wModel" required>
+                                            <option value="">Select</option>
+                                            <option>V-VARMA Fully Automatic</option>
+                                            <option>V-VARMA Semi Automatic</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Vendor Name *</label>
+                                        <select class="form-select" id="wVendor" required>
+                                            <option value="">Select</option>
+                                            <option>Official Dealer</option>
+                                            <option>Retail Shop</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">Date Type *</label>
+                                        <select class="form-select" id="wDateType">
+                                            <option>Installation</option>
+                                            <option>Purchase</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">Date *</label>
+                                        <input type="date" class="form-control" id="wDate" required>
+                                    </div>
+                                    <div class="col-12 mt-4">
+                                        <label class="form-label">Warranty Card / Invoice (Optional)</label>
+                                        <div class="file-upload-box" onclick="document.getElementById('wFile').click()">
+                                            <div class="file-upload-icon"><i class="fas fa-file-invoice"></i></div>
+                                            <div class="flex-grow-1">
+                                                <span class="small fw-bold d-block">Choose file</span>
+                                                <span class="text-muted" style="font-size: 0.7rem;" id="fileNameDisplay">No file chosen (Max 10MB, JPG/PNG)</span>
+                                            </div>
+                                            <input type="file" id="wFile" style="display:none;" onchange="handleFile(this)">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="d-flex justify-content-between mt-5">
+                                    <button type="button" class="btn btn-secondary px-4 rounded-3" onclick="location.href='<?= appUrl ?>?page=home'"><i class="fas fa-times me-2"></i> Cancel</button>
+                                    <button type="submit" class="btn btn-orange-portal">Next <i class="fas fa-arrow-right ms-2"></i></button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <!-- COMPLAINT FORM -->
+                        <div id="form-complaint" class="portal-section" style="display:none;">
+                            <h3 class="portal-form-title"><i class="fas fa-tools"></i> COMPLAINT REGISTRATION</h3>
+                            <p class="portal-form-subtitle">Quick service for your V-VARMA product</p>
+                            
+                            <form id="complaintForm">
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">Warranty ID *</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" id="cWarrantyId" placeholder="V-23-0045-201" required>
+                                            <button class="btn btn-scanner" type="button" onclick="openScanner('cWarrantyId')"><i class="fas fa-qrcode"></i></button>
+                                        </div>
+                                        <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none mt-1 fw-bold text-orange" onclick="verifyWarranty()">Verify Warranty</button>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Customer Name *</label>
+                                        <input type="text" class="form-control" id="cName" placeholder="Enter name" required>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Mobile Number *</label>
+                                        <input type="tel" class="form-control" id="cMobile" placeholder="10 digits" required>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Product Model *</label>
+                                        <select class="form-select" id="cModel" required>
+                                            <option value="">Select</option>
+                                            <option>V-VARMA Fully Automatic</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-12">
+                                        <label class="form-label">Service Address *</label>
+                                        <textarea class="form-control" id="cAddress" rows="3" placeholder="Full address" required></textarea>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Area *</label>
+                                        <input type="text" class="form-control" id="cArea" placeholder="Locality">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Landmark</label>
+                                        <input type="text" class="form-control" id="cLandmark" placeholder="Nearby landmark">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Pincode *</label>
+                                        <input type="text" class="form-control" id="cPincode" placeholder="6 digits">
+                                    </div>
+                                    <div class="col-12">
+                                        <label class="form-label">Issue Type *</label>
+                                        <select class="form-select" id="cIssueType" required>
+                                            <option value="">Select</option>
+                                            <option>Power Issue</option>
+                                            <option>Sensor Fault</option>
+                                            <option>Water Overflow</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-12">
+                                        <label class="form-label">Problem Description *</label>
+                                        <textarea class="form-control" id="cDesc" rows="3" placeholder="Describe the problem..." required></textarea>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Preferred Service Date *</label>
+                                        <input type="date" class="form-control" id="cDate" required>
+                                    </div>
+                                </div>
+                                <div class="text-center mt-5">
+                                    <button type="submit" class="btn btn-orange-portal w-100">Register Complaint</button>
+                                    <p class="small text-muted mt-2">A technician will be assigned within 24 hours.</p>
+                                </div>
+                            </form>
+                        </div>
+
+                        <!-- INSTALLATION FORM -->
+                        <div id="form-installation" class="portal-section" style="display:none;">
+                            <h3 class="portal-form-title"><i class="fas fa-cogs"></i> INSTALLATION REQUEST</h3>
+                            <p class="portal-form-subtitle">Schedule a professional installation for your device</p>
+                            
+                            <form id="installationForm">
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">Customer Name *</label>
+                                        <input type="text" class="form-control" id="iName" placeholder="Enter your name" required>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Mobile Number *</label>
+                                        <input type="tel" class="form-control" id="iMobile" placeholder="10 digit mobile" required>
+                                    </div>
+                                    
+                                    <div class="col-12">
+                                        <div class="section-divider"><i class="fas fa-filter"></i> Find Your Model</div>
+                                        <div class="row g-2">
+                                            <div class="col-md-3">
+                                                <select class="form-select form-select-sm" id="iMotor">
+                                                    <option>Motor Type</option>
+                                                    <option>Single Phase</option>
+                                                    <option>Three Phase</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <select class="form-select form-select-sm" id="iAuto">
+                                                    <option>Automation</option>
+                                                    <option>Full</option>
+                                                    <option>Semi</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <select class="form-select form-select-sm" id="iPhase">
+                                                    <option>Phase</option>
+                                                    <option>1</option>
+                                                    <option>3</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <select class="form-select form-select-sm" id="iTank">
+                                                    <option>Tank</option>
+                                                    <option>Overhead</option>
+                                                    <option>Underground</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="col-md-6">
+                                        <label class="form-label">Product Model *</label>
+                                        <select class="form-select" id="iModel" required>
+                                            <option value="">Select Model</option>
+                                            <option>V-VARMA Ultra</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Vendor Name *</label>
+                                        <select class="form-select" id="iVendor" required>
+                                            <option value="">Select</option>
+                                            <option>Direct V-VARMA</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-12">
+                                        <label class="form-label">Installation Address *</label>
+                                        <textarea class="form-control" id="iAddress" rows="3" placeholder="Full installation address" required></textarea>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Area *</label>
+                                        <input type="text" class="form-control" id="iArea" placeholder="Locality">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Landmark</label>
+                                        <input type="text" class="form-control" id="iLandmark" placeholder="Nearby landmark">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Pincode *</label>
+                                        <input type="text" class="form-control" id="iPincode" placeholder="6 digits">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Preferred Date *</label>
+                                        <input type="date" class="form-control" id="iDate" required>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Preferred Slot *</label>
+                                        <select class="form-select" id="iSlot" required>
+                                            <option value="">Select Time</option>
+                                            <option>Morning (9AM - 1PM)</option>
+                                            <option>Evening (2PM - 6PM)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="text-center mt-5">
+                                    <button type="submit" class="btn btn-orange-portal w-100">Request Installation</button>
+                                    <p class="small text-muted mt-2">A technician will be assigned within 24 hours.</p>
+                                </div>
+                            </form>
+                        </div>
+
+                        <!-- SUCCESS MODAL REPLACEMENT (Internal Step) -->
+                        <div id="portal-success" class="text-center py-5" style="display:none;">
+                            <div class="bg-success text-white rounded-circle d-inline-flex align-items-center justify-content-center mb-4" style="width: 80px; height: 80px; font-size: 40px;">
+                                <i class="fas fa-check"></i>
+                            </div>
+                            <h2 class="fw-bold mb-3">Request Submitted!</h2>
+                            <p class="text-muted mb-4" id="portalSuccessMsg">Your request has been successfully registered.</p>
+                            <div class="bg-light p-3 rounded-pill d-inline-block px-4 mb-4">
+                                <span class="text-muted me-2">Reference ID:</span>
+                                <strong class="text-dark" id="portalRefId">---</strong>
+                            </div>
+                            <br>
+                            <button class="btn btn-outline-dark px-4" onclick="location.reload()">New Request</button>
+                            <a href="<?= appUrl ?>?page=home" class="btn btn-orange-portal px-4 ms-2">Back to Home</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scanner Modal -->
+    <div class="modal fade" id="scannerModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title"><i class="fas fa-qrcode me-2"></i>QR / Barcode Scanner</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" id="closeScannerBtn"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div id="scannerChoices" class="text-center">
+                        <div class="row g-3">
+                            <div class="col-6">
+                                <button class="btn btn-outline-dark w-100 p-4 rounded-4" onclick="startCameraScanner()">
+                                    <i class="fas fa-camera fa-2x d-block mb-2"></i> Camera
+                                </button>
+                            </div>
+                            <div class="col-6">
+                                <button class="btn btn-outline-dark w-100 p-4 rounded-4" onclick="document.getElementById('qrFileInput').click()">
+                                    <i class="fas fa-image fa-2x d-block mb-2"></i> Gallery
+                                </button>
+                                <input type="file" id="qrFileInput" accept="image/*" style="display:none;" onchange="handleFileScan(this)">
+                            </div>
+                        </div>
+                    </div>
+                    <div id="readerContainer" style="display:none;">
+                        <div id="reader" style="width: 100%;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <?!= include('floating_icons'); ?>
+    <?!= include('chat_widget'); ?>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <?!= include('shared_scripts.js'); ?>
+    <script>
+        let currentTab = 'warranty';
+        let targetInputId = '';
+        let html5QrCode;
+        const scannerModal = new bootstrap.Modal(document.getElementById('scannerModal'));
+
+        function switchTab(tab) {
+            currentTab = tab;
+            document.querySelectorAll('.portal-tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('btn-' + tab).classList.add('active');
+            
+            document.querySelectorAll('.portal-section').forEach(s => s.style.display = 'none');
+            document.getElementById('form-' + tab).style.display = 'block';
+            document.getElementById('portal-success').style.display = 'none';
+        }
+
+        function handleFile(input) {
+            const display = document.getElementById('fileNameDisplay');
+            if (input.files.length > 0) display.innerText = input.files[0].name;
+            else display.innerText = 'No file chosen (Max 10MB, JPG/PNG)';
+        }
+
+        function openScanner(inputId) {
+            targetInputId = inputId;
+            document.getElementById('scannerChoices').style.display = 'block';
+            document.getElementById('readerContainer').style.display = 'none';
+            scannerModal.show();
+        }
+
+        function handleCameraError(err) {
+            console.error('Camera Error:', err);
+            const errMsg = err ? (err.message || String(err)) : '';
+            let text = 'Could not start camera. Please check connections and permissions.';
+
+            if (errMsg.indexOf('NotAllowedError') > -1 || errMsg.indexOf('Permission denied') > -1 || errMsg.indexOf('Permission dismissed') > -1) {
+                text = 'Camera access is required to scan. Please allow camera access in your browser settings and try again.';
+            } else if (errMsg.indexOf('NotFoundError') > -1 || errMsg.indexOf('DevicesNotFoundError') > -1 || errMsg.indexOf('no cameras') > -1 || errMsg.indexOf('No camera') > -1) {
+                text = 'Camera is not connected to your system, so you cannot scan.';
+            } else if (errMsg) {
+                text = errMsg;
+            }
+
+            alert(text);
+            scannerModal.hide();
+        }
+
+        function startCameraScanner() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                handleCameraError('NotFoundError: Camera is not connected to your system.');
+                return;
+            }
+
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+            .then(stream => {
+                // Permission granted! Stop the temp stream tracks
+                stream.getTracks().forEach(track => track.stop());
+
+                document.getElementById('scannerChoices').style.display = 'none';
+                document.getElementById('readerContainer').style.display = 'block';
+                if (html5QrCode) {
+                    try {
+                        html5QrCode.clear();
+                    } catch(e) {}
+                }
+                html5QrCode = new Html5Qrcode("reader");
+                html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, (text) => {
+                    document.getElementById(targetInputId).value = text;
+                    stopScanner();
+                    scannerModal.hide();
+                }).catch(err => {
+                    handleCameraError(err);
+                });
+            })
+            .catch(err => {
+                handleCameraError(err);
+            });
+        }
+
+        function handleFileScan(input) {
+            if (!input.files || input.files.length === 0) return;
+            const fileScanner = new Html5Qrcode("reader");
+            fileScanner.scanFile(input.files[0], true).then(text => {
+                document.getElementById(targetInputId).value = text;
+                scannerModal.hide();
+            }).catch(err => alert("No code found in image."));
+        }
+
+        function stopScanner() {
+            if (html5QrCode && html5QrCode.isScanning) {
+                html5QrCode.stop().then(() => html5QrCode.clear()).catch(e => console.error(e));
+            }
+        }
+
+        document.getElementById('scannerModal').addEventListener('hidden.bs.modal', stopScanner);
+
+        // Form Submissions
+        document.getElementById('warrantyForm').onsubmit = (e) => handleFormSubmit(e, 'registerWarranty', 'Warranty registration complete!');
+        document.getElementById('complaintForm').onsubmit = (e) => handleFormSubmit(e, 'bookComplaint', 'Complaint successfully registered!');
+        document.getElementById('installationForm').onsubmit = (e) => handleFormSubmit(e, 'bookInstallation', 'Installation request submitted!');
+
+        function handleFormSubmit(e, funcName, successMsg) {
+            e.preventDefault();
+            const btn = e.target.querySelector('button[type="submit"]');
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Submitting...';
+
+            // Gather data (simplified for this UI update)
+            const formData = {};
+            new FormData(e.target).forEach((value, key) => formData[key] = value);
+            
+            // Call backend
+            google.script.run.withSuccessHandler(res => {
+                if (res.success) {
+                    document.getElementById('form-' + currentTab).style.display = 'none';
+                    document.getElementById('portal-success').style.display = 'block';
+                    document.getElementById('portalSuccessMsg').innerText = successMsg;
+                    document.getElementById('portalRefId').innerText = res.warrantyId || res.complaintId || res.installationId;
+                } else {
+                    alert('Error: ' + res.message);
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                }
+            })[funcName](formData);
+        }
+
+        // Initialize from URL
+        document.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            const tab = params.get('tab') || 'warranty';
+            switchTab(tab);
+        });
+    </script>
+</body>
+</html>

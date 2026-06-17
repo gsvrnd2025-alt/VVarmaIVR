@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base target="_top">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Installation Request - V-VARMA</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <?!= include('shared_styles'); ?>
+</head>
+<body>
+    <?!= include('navbar'); ?>
+
+    <div id="installation" class="section funky-page">
+        <div class="funky-bg-blur"></div>
+        <div class="floating-symbols" id="symbols-installation-fixed"></div>
+        <div class="container-fluid">
+            <div class="funky-card">
+                <h2><i class="fas fa-cogs me-3"></i>Installation Request</h2>
+                <p class="text-center text-muted mb-4">Schedule a professional installation for your device</p>
+                <form id="installationForm" onsubmit="registerInstallation(event)">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label required">Customer Name *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-user"></i></span>
+                                <input type="text" class="form-control" id="installCustomerName" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label required">Mobile Number *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-mobile-alt"></i></span>
+                                <input type="tel" class="form-control" id="installMobile" required pattern="[0-9]{10}" placeholder="10 digit number" maxlength="10">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Email</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-envelope"></i></span>
+                                <input type="email" class="form-control" id="installEmail" placeholder="optional@example.com">
+                            </div>
+                        </div>
+
+                        <div class="col-12">
+                            <label class="form-label fw-bold text-brown">Product Specification Filters</label>
+                            <div class="row g-2">
+                                <div class="col-md-3">
+                                    <select class="form-select form-select-sm" id="filterMotorType" onchange="filterInstallModels()">
+                                        <option value="">Select Motor Type</option>
+                                        <option value="Compressor Motor Pump">Compressor Motor Pump</option>
+                                        <option value="Jet Motor Pump">Jet Motor Pump</option>
+                                        <option value="Sump Submersible">Sump Submersible</option>
+                                        <option value="Borewell Submersible">Borewell Submersible</option>
+                                        <option value="Pressure Motor">Pressure Motor</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <select class="form-select form-select-sm" id="filterAutomationType" onchange="filterInstallModels()">
+                                        <option value="">Select Automation</option>
+                                        <option value="Semi-Automatic">Semi-Automatic</option>
+                                        <option value="Fully-Automatic">Fully-Automatic</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <select class="form-select form-select-sm" id="filterPhase" onchange="filterInstallModels()">
+                                        <option value="">Select Phase</option>
+                                        <option value="Single Phase">Single Phase</option>
+                                        <option value="Three Phase">Three Phase</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <select class="form-select form-select-sm" id="filterTankType" onchange="filterInstallModels()">
+                                        <option value="">Select Tank Type</option>
+                                        <option value="Overhead">Overhead</option>
+                                        <option value="Sump">Sump</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-md-12">
+                            <label class="form-label fw-bold">Part Number / Serial (Optional)</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-barcode"></i></span>
+                                <input type="text" class="form-control" id="installPartNumber" placeholder="Scan or Enter Serial">
+                                <button class="btn btn-outline-orange" type="button" onclick="openQRScanner('installPartNumber')">
+                                    <i class="fas fa-qrcode"></i> Scan
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label class="form-label required">Product Model *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-cube"></i></span>
+                                <select class="form-select" id="installProductModel" required>
+                                    <option value="">Select Model</option>
+                                    <!-- Models loaded dynamically -->
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label required">Vendor Name *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-store"></i></span>
+                                <select class="form-select" id="installVendorName" required>
+                                    <option value="">Select Vendor</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="col-12">
+                            <label class="form-label required">Address *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-map-marker-alt"></i></span>
+                                <textarea class="form-control" id="installAddress" rows="2" required placeholder="Full address"></textarea>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label required">Area *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-city"></i></span>
+                                <input type="text" class="form-control" id="installArea" required>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label required">Pincode *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-mail-bulk"></i></span>
+                                <input type="text" class="form-control" id="installPincode" required pattern="[0-9]{6}">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label required">Preferred Service Date *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-calendar-day"></i></span>
+                                <input type="date" class="form-control" id="installServiceDate" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label required">Preferred Time Slot *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-clock"></i></span>
+                                <select class="form-select" id="installTimeSlot" required>
+                                    <option value="">Select Time</option>
+                                    <option value="9AM-12PM">9:00 AM - 12:00 PM</option>
+                                    <option value="12PM-3PM">12:00 PM - 3:00 PM</option>
+                                    <option value="3PM-6PM">3:00 PM - 6:00 PM</option>
+                                    <option value="6PM-8PM">6:00 PM - 8:00 PM</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-12 mt-3">
+                            <label class="form-label fw-bold">Attachments / Photos (Optional)</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-paperclip"></i></span>
+                                <input type="file" class="form-control" id="installFile" accept="image/*,application/pdf" onchange="handlePublicInstallFile(this)">
+                                <input type="hidden" id="installAttachmentUrl">
+                            </div>
+                            <div id="installFileStatus" class="mt-2 small text-muted">Maximum size: 10MB</div>
+                        </div>
+
+                        <div class="col-12 mt-4">
+                            <button type="submit" class="btn btn-orange px-5" id="installSubmitBtn">
+                                <i class="fas fa-paper-plane me-2"></i>Request Installation
+                            </button>
+                            <a href="<?= appUrl ?>?page=home" class="btn btn-secondary">
+                                <i class="fas fa-times me-2"></i>Cancel
+                            </a>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <?!= include('floating_icons'); ?>
+    <?!= include('chat_widget'); ?>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <?!= include('shared_scripts.js'); ?>
+</body>
+</html>

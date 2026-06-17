@@ -1,0 +1,688 @@
+<script>
+    /**
+     * V-VARMA V3 MODULAR WEB PORTAL
+     * Shared JavaScript Logic (shared_scripts.js.html)
+     */
+
+    const state = {
+        currentRole: 'Guest',
+        isEmbedded: window.self !== window.top,
+        appUrl: '<?= appUrl ?>' || (typeof APP_CONFIG !== 'undefined' ? APP_CONFIG.appUrl : ''),
+        version: '<?= version ?>' || (typeof APP_CONFIG !== 'undefined' ? APP_CONFIG.version : '3.5.6')
+    };
+
+    /**
+     * SAFE SERVER WRAPPER
+     * Centralized handling for all backend calls.
+     */
+    function callServer(funcName, args = [], onSuccess = null, onFailure = null, timeoutSeconds = 30) {
+        let isTimedOut = false;
+        
+        // Timeout Guard
+        const timeoutTimer = setTimeout(() => {
+            isTimedOut = true;
+            console.error(`[Server] Request Timeout: ${funcName}`);
+            hideAdminLoading && hideAdminLoading();
+            if (onFailure) onFailure({ message: 'Request timed out. Please check your connection or redeploy the script.' });
+            else showMessage('Timeout', `Server took too long to respond to ${funcName}`, 'error');
+        }, timeoutSeconds * 1000);
+
+        const runner = google.script.run
+            .withSuccessHandler(res => {
+                if (isTimedOut) return;
+                clearTimeout(timeoutTimer);
+                if (onSuccess) onSuccess(res);
+            })
+            .withFailureHandler(err => {
+                if (isTimedOut) return;
+                clearTimeout(timeoutTimer);
+                console.error(`[Server] Execution Failed: ${funcName}`, err);
+                if (onFailure) onFailure(err);
+                else handleServerError(err);
+            });
+
+        // Dynamic execution
+        if (Array.isArray(args)) {
+            runner[funcName](...args);
+        } else {
+            runner[funcName](args);
+        }
+    }
+
+    function checkVersionMismatch() {
+        callServer('getVersion', [], (serverVersion) => {
+            console.log(`[Version Check] Frontend: ${state.version} | Backend: ${serverVersion}`);
+            if (state.version !== serverVersion) {
+                console.warn('CRITICAL: Version Mismatch Detected!');
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        title: 'Update Detected',
+                        text: 'A new version of the dashboard is available. Please refresh to ensure stability.',
+                        icon: 'warning',
+                        confirmButtonText: 'Refresh Now'
+                    }).then(() => location.reload());
+                } else {
+                    alert('Version mismatch detected. Please refresh the page.');
+                }
+            }
+        });
+    }
+
+    // ==========================================
+    // 1. NAVIGATION & UI UTILITIES
+    // ==========================================
+
+    function navigateSection(sectionId) {
+        console.log('[Nav] Navigating to:', sectionId);
+        // Shared navigation for public pages
+        const pages = ['home', 'register', 'complaint', 'installation', 'tracking', 'catalog', 'dealers', 'cart', 'login', 'dashboard_admin', 'dashboard_tech', 'dashboard_customer', 'dashboard_vendor'];
+        if (pages.includes(sectionId)) {
+            let targetUrl = (state.appUrl || '') + '?page=' + sectionId;
+            console.log('[Nav] Target URL:', targetUrl);
+            
+            // In Google Apps Script web apps, direct location change usually works 
+            // if it's within the same script, but sometimes relative is safer.
+            try {
+                window.location.href = targetUrl;
+            } catch (e) {
+                console.error('[Nav] Navigation failed, trying relative:', e);
+                window.location.search = '?page=' + sectionId;
+            }
+        } else {
+            console.warn('[Nav] Invalid section ID:', sectionId);
+        }
+    }
+
+    function showLogin(role) {
+        if (window.location.search.includes('page=login') && typeof switchRole === 'function') {
+            switchRole(role);
+            // Also update URL without reload for consistency
+            const newUrl = window.location.pathname + '?page=login&role=' + role;
+            window.history.pushState({ path: newUrl }, '', newUrl);
+        } else {
+            window.location.search = '?page=login&role=' + role;
+        }
+    }
+
+    function logout() {
+        localStorage.removeItem('vvarma_user');
+        localStorage.removeItem('vvarma_role');
+        window.location.href = state.appUrl + '?page=home';
+    }
+
+    function showMessage(title, text, type = 'success') {
+        // Simple alert for now, can be upgraded to SweetAlert or Bootstrap Toast
+        alert(`${title}: ${text}`);
+    }
+
+    function handleServerError(err) {
+        console.error('Server Error:', err);
+        const msg = err.message || 'Unknown server error occurred.';
+        
+        if (typeof Swal !== 'undefined') {
+            Swal.fire('Critical Error', msg, 'error');
+        } else {
+            alert('Critical Error: ' + msg);
+        }
+
+        // Reset all common loaders
+        document.querySelectorAll('button').forEach(b => b.disabled = false);
+        ['section-loader', 'loginSpinner', 'warrantySpinner'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        });
+    }
+
+    // ==========================================
+    // 2. FORM SUBMISSION HANDLERS
+    // ==========================================
+
+    /**
+     * Warranty Registration
+     */
+    function registerWarranty(event) {
+        if (event) event.preventDefault();
+
+        const btn = document.getElementById('warrantySubmitBtn');
+        const spinner = document.getElementById('warrantySpinner');
+        const btnText = document.getElementById('warrantyBtnText');
+
+        if (btn) btn.disabled = true;
+        if (spinner) spinner.style.display = 'inline-block';
+        if (btnText) btnText.style.display = 'none';
+
+        const data = {
+            partNumber: document.getElementById('partNumber').value,
+            productModel: document.getElementById('productModel').value,
+            vendorName: document.getElementById('vendorName').value,
+            dateType: document.getElementById('dateType').value,
+            warrantyDate: document.getElementById('warrantyDate').value,
+            customerName: document.getElementById('customerName').value,
+            mobile: document.getElementById('mobile').value,
+            email: document.getElementById('email').value,
+            address: document.getElementById('address').value,
+            area: document.getElementById('area').value,
+            landmark: document.getElementById('landmark').value,
+            pincode: document.getElementById('pincode').value
+        };
+
+        google.script.run
+            .withSuccessHandler(res => {
+                if (res.success) {
+                    showMessage('Success', 'Warranty Registered Successfully! ID: ' + res.warrantyId);
+                    setTimeout(() => navigateSection('home'), 3000);
+                } else {
+                    showMessage('Error', res.message);
+                    if (btn) btn.disabled = false;
+                    if (spinner) spinner.style.display = 'none';
+                    if (btnText) btnText.style.display = 'inline';
+                }
+            })
+            .withFailureHandler(handleServerError)
+            .registerWarranty(data);
+    }
+
+    /**
+     * Complaint Booking
+     */
+    function registerComplaint(event) {
+        if (event) event.preventDefault();
+        const btn = document.getElementById('complaintSubmitBtn');
+        if (btn) btn.disabled = true;
+
+        const data = {
+            warrantyId: document.getElementById('compWarrantyId').value,
+            customerName: document.getElementById('compCustomerName').value,
+            mobile: document.getElementById('compMobile').value,
+            email: document.getElementById('compEmail').value,
+            productModel: document.getElementById('compProductModel').value,
+            issueType: document.getElementById('compIssueType').value,
+            problemDesc: document.getElementById('compProblemDesc').value,
+            address: document.getElementById('compAddress').value,
+            area: document.getElementById('compArea').value,
+            landmark: document.getElementById('compLandmark').value,
+            pincode: document.getElementById('compPincode').value,
+            serviceDate: document.getElementById('compServiceDate').value,
+            timeSlot: document.getElementById('compTimeSlot').value
+        };
+
+        google.script.run.withSuccessHandler(res => {
+            if (res.success) {
+                showMessage('Success', 'Complaint Booked! ID: ' + res.complaintId);
+                setTimeout(() => navigateSection('home'), 3000);
+            } else {
+                showMessage('Error', res.message);
+                if (btn) btn.disabled = false;
+            }
+        }).bookComplaint(data);
+    }
+
+    /**
+     * Installation Request
+     */
+    function registerInstallation(event) {
+        if (event) event.preventDefault();
+        const btn = document.getElementById('installSubmitBtn');
+        if (btn) btn.disabled = true;
+
+        const data = {
+            customerName: document.getElementById('installCustomerName').value,
+            mobile: document.getElementById('installMobile').value,
+            email: document.getElementById('installEmail') ? document.getElementById('installEmail').value : '',
+            productModel: document.getElementById('installProductModel').value,
+            partNumber: document.getElementById('installPartNumber') ? document.getElementById('installPartNumber').value : '',
+            vendorName: document.getElementById('installVendorName').value,
+            motorType: document.getElementById('filterMotorType').value,
+            automationType: document.getElementById('filterAutomationType').value,
+            phase: document.getElementById('filterPhase').value,
+            tankType: document.getElementById('filterTankType').value,
+            address: document.getElementById('installAddress').value,
+            area: document.getElementById('installArea').value,
+            pincode: document.getElementById('installPincode').value,
+            serviceDate: document.getElementById('installServiceDate').value,
+            timeSlot: document.getElementById('installTimeSlot').value,
+            attachmentUrl: document.getElementById('installAttachmentUrl') ? document.getElementById('installAttachmentUrl').value : '',
+            isAdmin: false
+        };
+
+        google.script.run.withSuccessHandler(res => {
+            if (res.success) {
+                showMessage('Success', 'Installation Request Sent! ID: ' + res.installationId);
+                setTimeout(() => navigateSection('home'), 3000);
+            } else {
+                showMessage('Error', res.message);
+                if (btn) btn.disabled = false;
+            }
+        }).bookInstallation(data);
+    }
+
+    // ==========================================
+    // 3. TRACKING & SEARCH LOGIC
+    // ==========================================
+
+    function trackByWarrantyId() {
+        const val = document.getElementById('trackWarrantyInput').value;
+        if (!val) return;
+        google.script.run.withSuccessHandler(res => {
+            renderTrackingResults(res.data);
+        }).searchWarranty('id', val);
+    }
+
+    function trackByMobile() {
+        const val = document.getElementById('trackMobileInput').value;
+        if (!val) return;
+        google.script.run.withSuccessHandler(res => {
+            renderTrackingResults(res.data);
+        }).searchWarranty('mobile', val);
+    }
+
+    function trackByComplaintId() {
+        const val = document.getElementById('trackComplaintInput').value;
+        if (!val) return;
+        google.script.run.withSuccessHandler(res => {
+            renderTrackingResults(res.data, 'complaint');
+        }).searchComplaint('id', val);
+    }
+
+    function renderTrackingResults(data, type = 'warranty') {
+        const container = document.getElementById('trackingResults');
+        if (!data || data.length === 0) {
+            container.innerHTML = '<div class="alert alert-warning">No records found.</div>';
+            return;
+        }
+
+        let html = '<div class="list-group">';
+        data.forEach(item => {
+            if (type === 'warranty') {
+                html += `
+                <div class="list-group-item">
+                    <h6><i class="fas fa-shield-alt text-orange me-2"></i>Warranty: ${item.WarrantyID}</h6>
+                    <p class="mb-1">Product: ${item.ProductModel} | Status: ${item.Status}</p>
+                    <small>Expires: ${item.EndDate}</small>
+                </div>`;
+            } else {
+                html += `
+                <div class="list-group-item">
+                    <h6><i class="fas fa-tools text-brown me-2"></i>Complaint: ${item.ComplaintID}</h6>
+                    <p class="mb-1">Status: ${item.Status}</p>
+                    <small>Scheduled: ${item.ServiceDate}</small>
+                </div>`;
+            }
+        });
+        html += '</div>';
+        container.innerHTML = html;
+    }
+
+    // ==========================================
+    // 4. DATA POPULATION (Dropdowns)
+    // ==========================================
+
+    function filterInstallModels() {
+        const motor = document.getElementById('filterMotorType').value;
+        const auto = document.getElementById('filterAutomationType').value;
+        const phase = document.getElementById('filterPhase').value;
+        const tank = document.getElementById('filterTankType').value;
+        const select = document.getElementById('installProductModel');
+
+        if (!window._publicCatalogCache) {
+            google.script.run.withSuccessHandler(data => {
+                window._publicCatalogCache = data;
+                filterInstallModels(); // Re-run once data is loaded
+            }).getPublicCatalogProducts();
+            return;
+        }
+
+        select.innerHTML = '<option value="">Select Model</option>';
+        window._publicCatalogCache.forEach(p => {
+            let match = true;
+            if (motor && p['Motor Type'] !== motor) match = false;
+            if (auto && p['Automation Type'] !== auto) match = false;
+            if (phase && p['Phase'] !== phase) match = false;
+            if (tank && p['Tank Type'] !== tank) match = false;
+
+            if (match) {
+                let opt = new Option((p['Product Title'] || p['Model Name']) + ' (' + p['Model Number'] + ')', p['Model Name'] || p['Model Number']);
+                select.add(opt);
+            }
+        });
+    }
+
+    function loadInitialData() {
+        // Load Product Models
+        google.script.run.withSuccessHandler(models => {
+            if (!models || !Array.isArray(models)) return;
+            const selects = ['productModel', 'compProductModel', 'installProductModel', 'adminProductModel'];
+            selects.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    models.forEach(m => {
+                        const opt = document.createElement('option');
+                        opt.value = m.code || m;
+                        opt.textContent = m.name || m;
+                        el.appendChild(opt);
+                    });
+                }
+            });
+        }).getProductModels();
+
+        // Load Vendors
+        google.script.run.withSuccessHandler(vendors => {
+            if (!vendors || !Array.isArray(vendors)) return;
+            const selects = ['vendorName', 'installVendorName', 'adminVendorName'];
+            selects.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    vendors.forEach(v => {
+                        const opt = document.createElement('option');
+                        opt.value = v.name || v;
+                        opt.textContent = v.name || v;
+                        el.appendChild(opt);
+                    });
+                }
+            });
+        }).getVendorsList();
+
+        // Load Issue Types
+        google.script.run.withSuccessHandler(issues => {
+            const el = document.getElementById('compIssueType');
+            if (el) {
+                issues.forEach(i => {
+                    const opt = document.createElement('option');
+                    opt.value = i.name;
+                    opt.textContent = i.name;
+                    el.appendChild(opt);
+                });
+            }
+        }).getIssueTypes();
+    }
+
+    // ==========================================
+    // 5. AUTHENTICATION (Login Handlers)
+    // ==========================================
+
+    function handleLogin(role, event) {
+        if (event) event.preventDefault();
+
+        // Dynamic field detection based on the page
+        const u = document.getElementById('loginUser')?.value ||
+            document.getElementById('adminUsername')?.value ||
+            document.getElementById('techUsername')?.value ||
+            document.getElementById('vendorUsername')?.value ||
+            document.getElementById('custMobile')?.value;
+
+        const p = document.getElementById('loginPass')?.value ||
+            document.getElementById('adminPassword')?.value ||
+            document.getElementById('techPassword')?.value ||
+            document.getElementById('vendorPassword')?.value ||
+            document.getElementById('custPassword')?.value;
+
+        const btn = document.getElementById('loginBtn') ||
+            document.getElementById('adminLoginBtn') ||
+            document.getElementById('techLoginBtn') ||
+            document.getElementById('vendorLoginBtn') ||
+            document.getElementById('customerLoginBtn');
+
+        if (btn) btn.disabled = true;
+
+        const successCallback = res => {
+            console.log('[Login] Success Response:', res);
+            if (res.success) {
+                const userData = res.user || res.technician || res.vendor || res.customer || {};
+                localStorage.setItem('vvarma_user', JSON.stringify(userData));
+                localStorage.setItem('vvarma_role', role);
+                
+                // Store standard keys to prevent session load fallbacks in dynamic panels
+                const mobile = userData.Mobile || userData.mobile || '';
+                const name = userData.Name || userData.name || '';
+                localStorage.setItem('vvarma_user_mobile', mobile);
+                localStorage.setItem('vvarma_user_name', name);
+                
+                console.log('[Login] Credentials stored. Redirecting to dashboard...');
+                navigateSection('dashboard_' + role);
+            } else {
+                // Check if we are on the login page and have an error container
+                const errorDiv = document.getElementById('loginError');
+                const errorMessage = document.getElementById('errorMessage');
+
+                if (errorDiv && errorMessage) {
+                    errorMessage.innerText = res.message;
+                    errorDiv.classList.remove('d-none');
+                } else {
+                    showMessage('Login Failed', res.message);
+                }
+
+                if (btn) btn.disabled = false;
+                const spinner = document.getElementById('loginSpinner');
+                if (spinner) spinner.style.display = 'none';
+                const btnText = document.getElementById('loginBtnText');
+                if (btnText) btnText.innerText = 'SIGN IN';
+            }
+        };
+
+        const runner = google.script.run
+            .withSuccessHandler(successCallback)
+            .withFailureHandler(handleServerError);
+
+        if (role === 'admin') runner.adminLogin(u, p);
+        else if (role === 'tech') runner.technicianLogin(u, p);
+        else if (role === 'vendor') runner.vendorLogin(u, p);
+        else if (role === 'customer') runner.customerLogin(u, p);
+    }
+
+    // Explicit wrappers for form 'onsubmit' handlers
+    function adminLogin(e) { handleLogin('admin', e); }
+    function technicianLogin(e) { handleLogin('tech', e); }
+    function vendorLogin(e) { handleLogin('vendor', e); }
+    function customerLogin(e) { handleLogin('customer', e); }
+
+    // ==========================================
+    // 6. UTILITY FUNCTIONS
+    // ==========================================
+
+    function checkPartNumberForWarranty(val) {
+        // Logic to verify part number availability/validity
+        console.log("Checking part number:", val);
+    }
+
+    function openQRScanner(fieldId) {
+        showMessage('QR Scanner', 'Camera access required. (Feature active in live environment)');
+    }
+
+    function previewImage(input, previewId) {
+        const preview = document.getElementById(previewId);
+        if (input.files && input.files[0]) {
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                preview.innerHTML = `<img src="${e.target.result}" style="max-width: 100%; height: auto; border-radius: 8px;">`;
+            };
+            reader.readAsDataURL(input.files[0]);
+        }
+    }
+    function handlePublicInstallFile(input) {
+        if (!input.files || !input.files[0]) return;
+        const file = input.files[0];
+        const status = document.getElementById('installFileStatus');
+        
+        if (file.size > 10 * 1024 * 1024) {
+            alert('File size exceeds 10MB limit');
+            input.value = '';
+            return;
+        }
+
+        status.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> Uploading...';
+        
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            google.script.run.withSuccessHandler(url => {
+                document.getElementById('installAttachmentUrl').value = url;
+                status.innerHTML = '<i class="fas fa-check-circle text-success me-2"></i> File Ready';
+            }).uploadFile(e.target.result, file.name, file.type, 'PublicInstallations');
+        };
+        reader.readAsDataURL(file);
+    }
+
+    // ==========================================
+    // 6. HEADER & SCROLL LOGIC
+    // ==========================================
+
+    function initHeaderScroll() {
+        const header = document.getElementById('mainHeader');
+        const navbar = document.getElementById('mainNavbar');
+        const navLogoContainer = document.getElementById('navbarLogoContainer');
+        const headerLogo = document.querySelector('#headerLogoContainer img');
+
+        if (!header || !navbar) return;
+
+        const handleScroll = () => {
+            const scrollPos = window.scrollY;
+            const scrollThreshold = 100; // Trigger slightly before full exit for smoothness
+
+            if (scrollPos > scrollThreshold) {
+                if (!navbar.classList.contains('navbar-scrolled')) {
+                    navbar.classList.add('navbar-scrolled');
+                }
+                if (navLogoContainer && navLogoContainer.classList.contains('navbar-logo-hidden')) {
+                    navLogoContainer.classList.remove('navbar-logo-hidden');
+                    navLogoContainer.classList.add('navbar-logo-visible');
+                }
+            } else {
+                if (navbar.classList.contains('navbar-scrolled')) {
+                    navbar.classList.remove('navbar-scrolled');
+                }
+                if (navLogoContainer && navLogoContainer.classList.contains('navbar-logo-visible')) {
+                    navLogoContainer.classList.remove('navbar-logo-visible');
+                    navLogoContainer.classList.add('navbar-logo-hidden');
+                }
+            }
+        };
+
+        window.addEventListener('scroll', handleScroll);
+        handleScroll(); // Run once on init to catch refresh state
+    }
+
+    /**
+     * Sync Logo across all containers (Header and Navbar)
+     */
+    function syncSiteLogo(logoUrl) {
+        if (!logoUrl) return;
+
+        const containers = ['headerLogoContainer', 'navbarLogoContainer'];
+        containers.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                // Determine sizing based on container
+                const isNavbar = id === 'navbarLogoContainer';
+                const maxHeight = isNavbar ? '45px' : '85px';
+
+                // Inject with class and inline style for immediate stability
+                el.innerHTML = `<img src="${logoUrl}" 
+                                     alt="V-VARMA Logo" 
+                                     class="site-main-logo" 
+                                     style="max-height: ${maxHeight} !important; width: auto !important; height: auto !important; object-fit: contain;">`;
+
+                if (isNavbar) {
+                    el.classList.add('navbar-logo-hidden');
+                }
+            }
+        });
+    }
+
+    // Run on every page load
+    document.addEventListener('DOMContentLoaded', () => {
+        try {
+            loadInitialData();
+            initHeaderScroll();
+
+            // Check if we need to load settings for logo (if not on home page which does it)
+            if (!window.location.search.includes('page=home')) {
+                google.script.run.withSuccessHandler(settings => {
+                    if (settings && settings.site_logo) syncSiteLogo(settings.site_logo);
+                }).getWebSettings();
+            }
+            
+            // Initialize Cart Badge globally
+            if (typeof updateCartBadge === 'function') {
+                updateCartBadge();
+            }
+        } catch (err) {
+            console.error('Initialization error:', err);
+        }
+    });
+
+    /**
+     * Update Global Cart Badge
+     */
+    function updateCartBadge() {
+        const cart = JSON.parse(localStorage.getItem('vvarma_cart') || '[]');
+        let count = 0;
+        cart.forEach(item => {
+            count += parseInt(item.qty) || 0;
+        });
+        
+        const isCartPage = window.location.search.includes('page=cart') || (typeof currentPage !== 'undefined' && currentPage === 'cart');
+        
+        const badge1 = document.getElementById('cartBadgeCount');
+        if (badge1) {
+            badge1.innerText = count;
+            badge1.style.display = (count > 0 && !isCartPage) ? 'inline-block' : 'none';
+        }
+        
+        const badge2 = document.getElementById('catalogBadge');
+        if (badge2) {
+            badge2.innerText = count;
+            badge2.style.display = (count > 0 && !isCartPage) ? 'inline-block' : 'none';
+        }
+        
+        // Also update modal "Add to cart" button if open
+        const modalContainer = document.getElementById('modalAddToCartContainer');
+        if (modalContainer && typeof currentProduct !== 'undefined' && currentProduct) {
+            const pid = currentProduct.ProductID || currentProduct.productid || currentProduct['Product ID'];
+            const exists = cart.find(x => x.pid == pid);
+            if (exists) {
+                const stockVal = currentProduct.Stock !== undefined ? currentProduct.Stock : (currentProduct.stock !== undefined ? currentProduct.stock : 999);
+                const stock = parseInt(stockVal, 10);
+                const isMax = exists.qty >= stock;
+                modalContainer.innerHTML = `
+                    <div class="d-flex justify-content-between align-items-center bg-light border border-2 border-orange rounded-pill shadow-sm" style="height: 100%; overflow: hidden;">
+                        <button class="btn btn-light rounded-pill rounded-end-0 py-3 fw-bold fs-5 text-orange border-0" style="width: 35%;" onclick="updateModalQty(-1, ${stock})"><i class="fas fa-minus"></i></button>
+                        <span class="fw-bold fs-5">${exists.qty}</span>
+                        <button class="btn btn-light rounded-pill rounded-start-0 py-3 fw-bold fs-5 text-orange border-0" style="width: 35%;" onclick="updateModalQty(1, ${stock})"><i class="fas fa-plus"></i></button>
+                    </div>
+                `;
+            } else {
+                modalContainer.innerHTML = `
+                    <button id="modalAddToCartBtn" class="btn btn-orange w-100 py-3 fw-bold rounded-pill shadow-sm" onclick="addToCartModal()">
+                        <i class="fas fa-cart-plus me-2"></i> ADD TO CART
+                    </button>
+                `;
+            }
+        }
+    }
+
+    function updateModalQty(delta, stockLimit) {
+        if (typeof currentProduct === 'undefined' || !currentProduct) return;
+        const pid = currentProduct.ProductID || currentProduct.productid || currentProduct['Product ID'];
+        const name = currentProduct.ProductTitle || currentProduct['Product Title'] || currentProduct.Name || 'Product';
+        const cart = JSON.parse(localStorage.getItem('vvarma_cart') || '[]');
+        const index = cart.findIndex(x => x.pid == pid);
+        if (index > -1) {
+            let newQty = cart[index].qty + delta;
+            let stock = (stockLimit !== undefined && stockLimit !== null) ? parseInt(stockLimit, 10) : 999;
+            if (newQty < 1) {
+                cart.splice(index, 1);
+            } else if (newQty > stock) {
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire('Out of Stock', `Only ${stock} items left in stock for ${name}.`, 'warning');
+                } else {
+                    alert(`Only ${stock} items left in stock for ${name}.`);
+                }
+                return;
+            } else {
+                cart[index].qty = newQty;
+            }
+            localStorage.setItem('vvarma_cart', JSON.stringify(cart));
+            if (typeof updateCartBadge === 'function') updateCartBadge();
+        }
+    }
+
+</script>
