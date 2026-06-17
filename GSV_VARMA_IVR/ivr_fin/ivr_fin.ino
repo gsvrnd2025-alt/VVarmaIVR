@@ -272,8 +272,8 @@ bool serverStarted = false;
 // [OTA] Firmware URL — stored in NVS so it survives reboots.
 // Set via the dashboard OTA Settings tab or paste directly:
 // ─────────────────────────────────────────────────────────────
-String otaFirmwareUrl = "https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/firmware.bin";      // Default raw binary URL
-String otaDescriptorUrl = "https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/version.json";  // Default JSON descriptor URL
+String otaFirmwareUrl = "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/firmware.bin";      // Default raw binary URL
+String otaDescriptorUrl = "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/version.json";  // Default JSON descriptor URL
 // ─────────────────────────────────────────────────────────────
 String otaStatus      = "idle";  // [OTA] idle | starting | downloading | flashing | success | failed
 bool   otaInProgress  = false;   // [OTA] Guard flag — prevents concurrent OTA attempts
@@ -2051,8 +2051,8 @@ void setup() {
   
   callSystemActive = preferences.getBool("callSysAct", true);
   smsSystemActive = preferences.getBool("smsSysAct", true);
-  otaFirmwareUrl  = preferences.getString("otaUrl", "https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/firmware.bin"); // [OTA] Load saved firmware URL from NVS
-  otaDescriptorUrl = preferences.getString("otaDescUrl", "https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/version.json"); // Load saved descriptor URL
+  otaFirmwareUrl  = preferences.getString("otaUrl", "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/firmware.bin"); // [OTA] Load saved firmware URL from NVS
+  otaDescriptorUrl = preferences.getString("otaDescUrl", "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/version.json"); // Load saved descriptor URL
   otaAutoUpdate   = preferences.getBool("otaAuto", false); // [OTA] Load auto update setting
   
   preferences.end();
