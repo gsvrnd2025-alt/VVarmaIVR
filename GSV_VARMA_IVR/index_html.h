@@ -6746,7 +6746,7 @@ body.light-theme .nav-pills .nav-link.active {
 
                 <div class="mb-3">
                   <label for="ota-input-url" class="form-label text-white small fw-bold">Firmware JSON Descriptor URL</label>
-                  <input type="text" id="ota-input-url" class="form-control glass-input" value="https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/version.json" placeholder="e.g. https://raw.githubusercontent.com/.../version.json">
+                  <input type="text" id="ota-input-url" class="form-control glass-input" value="https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/version.json" placeholder="e.g. https://raw.githubusercontent.com/.../version.json">
                 </div>
 
                 <div class="form-check form-switch form-switch-p mb-3">

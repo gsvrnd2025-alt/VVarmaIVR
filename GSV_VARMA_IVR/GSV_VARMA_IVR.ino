@@ -252,8 +252,8 @@ unsigned long ringingStartMillis = 0;
 unsigned long lastActivityTime = 0;
 
 // [OTA] Firmware URL — stored in NVS so it survives reboots.
-String otaFirmwareUrl = "https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/firmware.bin";      // Default raw binary URL
-String otaDescriptorUrl = "https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/version.json";  // Default JSON descriptor URL
+String otaFirmwareUrl = "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/firmware.bin";      // Default raw binary URL
+String otaDescriptorUrl = "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/version.json";  // Default JSON descriptor URL
 String otaStatus      = "idle";  // [OTA] idle | starting | downloading | flashing | success | failed
 bool   otaInProgress  = false;   // [OTA] Guard flag — prevents concurrent OTA attempts
 bool   otaAutoUpdate  = false;   // [OTA] Automatically check and update at boot
@@ -2648,8 +2648,8 @@ void setup() {
   testPhoneNumber = preferences.getString("testPhone", "");
   testSmsTemplate = preferences.getString("testSmsTmp", "Dear customer, you called but did not select any options. Thank you for calling V-Varma. Website: vvarma.gsvee.in");
   
-  otaFirmwareUrl  = preferences.getString("otaUrl", "https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/firmware.bin"); // [OTA] Load saved firmware URL from NVS
-  otaDescriptorUrl = preferences.getString("otaDescUrl", "https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/version.json"); // Load saved descriptor URL
+  otaFirmwareUrl  = preferences.getString("otaUrl", "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/firmware.bin"); // [OTA] Load saved firmware URL from NVS
+  otaDescriptorUrl = preferences.getString("otaDescUrl", "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/version.json"); // Load saved descriptor URL
   otaAutoUpdate   = preferences.getBool("otaAuto", false); // [OTA] Load auto update setting
 
   preferences.end();
