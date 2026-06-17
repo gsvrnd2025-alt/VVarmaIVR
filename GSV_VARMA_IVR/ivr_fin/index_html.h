@@ -662,6 +662,7 @@ body.light-theme .glass-card .form-label {
   transition: all var(--t-fast) ease;
   position: relative;
   overflow: hidden;
+  border: 1px solid transparent; /* Prevents layout shift jitter */
 }
 
 .sidebar-link-icon {
@@ -692,7 +693,7 @@ body.light-theme .glass-card .form-label {
 .sidebar-link.active {
   color: #fff;
   background: linear-gradient(135deg, rgba(243, 156, 18, 0.15) 0%, rgba(79, 172, 254, 0.1) 100%);
-  border: 1px solid rgba(243, 156, 18, 0.2);
+  border-color: rgba(243, 156, 18, 0.2); /* Changes border color only */
 }
 
 .sidebar-link.active .sidebar-link-icon {
@@ -4968,6 +4969,38 @@ body.light-theme .text-white:not(.btn):not(.btn *):not(.badge):not(.badge *):not
   overflow-y: auto !important;
 }
 
+/* Premium Glassmorphic Nav Pills */
+.nav-pills .nav-link {
+  border-radius: 8px;
+  transition: all 0.3s ease;
+  border: 1px solid transparent;
+  color: var(--text-muted) !important;
+  font-weight: 500;
+}
+.nav-pills .nav-link:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff !important;
+}
+.nav-pills .nav-link.active {
+  background: var(--accent-gradient) !important;
+  border-color: rgba(243, 156, 18, 0.3);
+  box-shadow: 0 4px 12px var(--accent-glow);
+  color: #fff !important;
+}
+
+/* Light Theme overrides for Nav Pills */
+body.light-theme .nav-pills .nav-link {
+  color: #475569 !important;
+}
+body.light-theme .nav-pills .nav-link:hover {
+  background: #f1f5f9;
+  color: #0f172a !important;
+}
+body.light-theme .nav-pills .nav-link.active {
+  background: var(--accent-gradient) !important;
+  color: #fff !important;
+}
+
 
 </style>
 </head>
@@ -6716,6 +6749,11 @@ body.light-theme .text-white:not(.btn):not(.btn *):not(.badge):not(.badge *):not
                   <input type="text" id="ota-input-url" class="form-control glass-input" value="https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/version.json" placeholder="e.g. https://raw.githubusercontent.com/.../version.json">
                 </div>
 
+                <div class="form-check form-switch form-switch-p mb-3">
+                  <input class="form-check-input" type="checkbox" id="switch-ota-auto-update">
+                  <label class="form-check-label text-white small fw-bold" for="switch-ota-auto-update">Enable Auto Update on Boot</label>
+                </div>
+
                 <div class="d-flex justify-content-between align-items-center mb-3">
                   <span class="text-white small">Status: <strong id="ota-status-label" class="text-warning">Idle</strong></span>
                   <div class="spinner-border spinner-border-sm text-info d-none" id="ota-spinner" role="status"></div>
@@ -6726,9 +6764,12 @@ body.light-theme .text-white:not(.btn):not(.btn *):not(.badge):not(.badge *):not
                   <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" id="ota-progress-bar" role="progressbar" style="width: 0%;"></div>
                 </div>
 
-                <div class="btn-action-group mt-auto d-flex gap-2">
+                <div class="btn-action-group mt-auto d-flex gap-2 flex-wrap">
                   <button class="btn btn-glass-info flex-grow-1" id="btn-check-update">
-                    <i class="fa-solid fa-sync me-2"></i>Check for Updates
+                    <i class="fa-solid fa-sync me-2"></i>Check Updates
+                  </button>
+                  <button class="btn btn-glass-secondary flex-grow-1" id="btn-test-ota-connection">
+                    <i class="fa-solid fa-plug-circle-check me-2"></i>Test Connection
                   </button>
                   <button class="btn btn-glass-success flex-grow-1 d-none" id="btn-start-update">
                     <i class="fa-solid fa-download me-2"></i>Install Update
@@ -8150,7 +8191,8 @@ document.addEventListener('DOMContentLoaded', () => {
 // NAVIGATION ROUTER
 // ============================================================
 function setupNavigation() {
-  const links     = document.querySelectorAll('.sidebar-link[data-target]');
+  // Bind both sidebar links and dashboard card links
+  const links     = document.querySelectorAll('.sidebar-link[data-target], .hud-action-link[data-target]');
   const sections  = document.querySelectorAll('.page-section');
   const titleEl   = document.getElementById('current-page-title');
   const sidebar   = document.getElementById('sidebar');
@@ -8163,18 +8205,27 @@ function setupNavigation() {
       const target = link.dataset.target;
       if (!target || target === currentSection) return;
 
-      // Update active link
-      links.forEach(l => l.classList.remove('active'));
-      link.classList.add('active');
+      // Update active link in sidebar
+      const sidebarLinks = document.querySelectorAll('.sidebar-link[data-target]');
+      sidebarLinks.forEach(l => l.classList.remove('active'));
+      const matchingSidebarLink = document.querySelector(`.sidebar-link[data-target="${target}"]`);
+      if (matchingSidebarLink) {
+        matchingSidebarLink.classList.add('active');
+        
+        // Update page title from the sidebar link text
+        const textEl = matchingSidebarLink.querySelector('.sidebar-link-text');
+        if (textEl && titleEl) {
+          titleEl.textContent = textEl.textContent.trim();
+        }
+      }
 
       // Swap visible section
       sections.forEach(sec => {
         sec.classList.toggle('active', sec.id === target);
       });
 
-      // Update title
-      const textEl = link.querySelector('.sidebar-link-text');
-      if (textEl) titleEl.textContent = textEl.textContent.trim();
+      // Reset window scroll position to top
+      window.scrollTo({ top: 0, behavior: 'instant' });
 
       currentSection = target;
       updateSummaryBannerVisibility();
@@ -9103,6 +9154,8 @@ function bindEventHandlers() {
       showToast('Rebooted', 'ESP32 is online in AP Mode', 'success');
       renderAllViews();
       updateSidebarDots();
+      document.querySelector('.sidebar-link[data-target="dashboard"]')?.click();
+      window.scrollTo(0, 0);
     }, 1200);
   });
 
@@ -9791,24 +9844,103 @@ function initOtaHandlers() {
   const currentVersionEl = document.getElementById('ota-current-version');
   if (currentVersionEl) currentVersionEl.textContent = currentVersion;
 
-  // 1. Fetch saved URL on load
+  // 1. Fetch saved URL & Auto Update config on load
   const loadSavedOtaUrl = async () => {
     try {
       const res = await fetch('/ota_status');
       if (res.ok) {
         const data = await res.json();
         const urlInput = document.getElementById('ota-input-url');
-        if (urlInput && data.url) {
-          urlInput.value = data.url;
+        if (urlInput) {
+          if (data.descriptorUrl) {
+            urlInput.value = data.descriptorUrl;
+          } else if (data.url) {
+            urlInput.value = data.url;
+          }
+        }
+        const autoSwitch = document.getElementById('switch-ota-auto-update');
+        if (autoSwitch) {
+          autoSwitch.checked = !!data.autoUpdate;
         }
       }
     } catch (err) {
-      console.warn('[OTA] Could not load saved OTA URL:', err);
+      console.warn('[OTA] Could not load saved OTA URL/Config:', err);
     }
   };
   loadSavedOtaUrl();
 
-  // 2. Check for updates
+  // 2. Auto Update switch toggler
+  const autoSwitch = document.getElementById('switch-ota-auto-update');
+  if (autoSwitch) {
+    autoSwitch.addEventListener('change', async function() {
+      const enabled = this.checked;
+      try {
+        const params = new URLSearchParams();
+        params.append('enabled', enabled ? 'true' : 'false');
+        const res = await fetch('/api/ota_auto_update', { method: 'POST', body: params });
+        if (res.ok) {
+          showToast('OTA Config', `Auto-update at boot is now ${enabled ? 'ENABLED' : 'DISABLED'}.`, 'success');
+        } else {
+          throw new Error('Config HTTP ' + res.status);
+        }
+      } catch (err) {
+        console.error('OTA Auto Update config error:', err);
+        showToast('OTA Config Error', 'Failed to save auto-update configuration.', 'danger');
+        this.checked = !enabled; // Revert switch state on error
+      }
+    });
+  }
+
+  // 3. Test Connection handler
+  bindClick('btn-test-ota-connection', async () => {
+    const testBtn = document.getElementById('btn-test-ota-connection');
+    const statusLabel = document.getElementById('ota-status-label');
+    const spinner = document.getElementById('ota-spinner');
+    const urlInput = document.getElementById('ota-input-url');
+
+    if (!urlInput || !testBtn || !statusLabel) return;
+
+    const url = urlInput.value.trim();
+    if (!url) {
+      alert('Please enter a valid version JSON descriptor URL.');
+      return;
+    }
+
+    testBtn.disabled = true;
+    if (spinner) spinner.classList.remove('d-none');
+    statusLabel.textContent = 'Testing connection...';
+
+    // Auto-save the descriptor URL to ESP32 NVS
+    try {
+      const saveParams = new URLSearchParams();
+      saveParams.append('url', url);
+      await fetch('/api/ota_save_descriptor', { method: 'POST', body: saveParams });
+    } catch (err) {
+      console.warn('[OTA] Failed to auto-save descriptor URL:', err);
+    }
+
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      
+      if (data && data.version && data.url) {
+        statusLabel.innerHTML = '<span class="text-success fw-bold"><i class="fa-solid fa-circle-check"></i> Connection Successful! Descriptor is valid.</span>';
+        showToast('Connection Success', 'GitHub repository is reachable and descriptor is valid.', 'success');
+      } else {
+        throw new Error('Descriptor missing version/url fields');
+      }
+    } catch (err) {
+      console.error('OTA Connection test error:', err);
+      statusLabel.innerHTML = `<span class="text-danger"><i class="fa-solid fa-circle-xmark"></i> Connection Failed: ${err.message}</span>`;
+      showToast('Connection Failed', `Could not reach target URL: ${err.message}`, 'danger');
+    } finally {
+      testBtn.disabled = false;
+      if (spinner) spinner.classList.add('d-none');
+    }
+  });
+
+  // 4. Check for updates
   let updateInfo = null;
   bindClick('btn-check-update', async () => {
     const checkBtn = document.getElementById('btn-check-update');
@@ -9829,6 +9961,15 @@ function initOtaHandlers() {
     if (spinner) spinner.classList.remove('d-none');
     statusLabel.textContent = 'Checking for updates...';
     if (startBtn) startBtn.classList.add('d-none');
+
+    // Auto-save the descriptor URL to ESP32 NVS
+    try {
+      const saveParams = new URLSearchParams();
+      saveParams.append('url', url);
+      await fetch('/api/ota_save_descriptor', { method: 'POST', body: saveParams });
+    } catch (err) {
+      console.warn('[OTA] Failed to auto-save descriptor URL:', err);
+    }
 
     try {
       const res = await fetch(url);
@@ -9859,7 +10000,7 @@ function initOtaHandlers() {
     }
   });
 
-  // 3. Start update
+  // 5. Start update
   let pollInterval = null;
   bindClick('btn-start-update', async () => {
     if (!updateInfo || !updateInfo.url) {
@@ -9873,6 +10014,7 @@ function initOtaHandlers() {
 
     const startBtn = document.getElementById('btn-start-update');
     const checkBtn = document.getElementById('btn-check-update');
+    const testBtn = document.getElementById('btn-test-ota-connection');
     const statusLabel = document.getElementById('ota-status-label');
     const progressWrap = document.getElementById('ota-progress-wrap');
     const progressBar = document.getElementById('ota-progress-bar');
@@ -9880,6 +10022,7 @@ function initOtaHandlers() {
 
     if (startBtn) startBtn.classList.add('d-none');
     if (checkBtn) checkBtn.disabled = true;
+    if (testBtn) testBtn.disabled = true;
     if (statusLabel) statusLabel.textContent = 'Saving URL...';
     if (progressWrap) progressWrap.classList.remove('d-none');
     if (progressBar) {
@@ -9961,6 +10104,7 @@ function initOtaHandlers() {
           }
           if (spinner) spinner.classList.add('d-none');
           if (checkBtn) checkBtn.disabled = false;
+          if (testBtn) testBtn.disabled = false;
           showToast('OTA Failed', 'Firmware download/flash failed.', 'danger');
         }
       }, 1500);
@@ -9975,6 +10119,7 @@ function initOtaHandlers() {
       }
       if (spinner) spinner.classList.add('d-none');
       if (checkBtn) checkBtn.disabled = false;
+      if (testBtn) testBtn.disabled = false;
       showToast('OTA Failed', err.message, 'danger');
     }
   });

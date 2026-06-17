@@ -272,10 +272,12 @@ bool serverStarted = false;
 // [OTA] Firmware URL — stored in NVS so it survives reboots.
 // Set via the dashboard OTA Settings tab or paste directly:
 // ─────────────────────────────────────────────────────────────
-String otaFirmwareUrl = "";      // PASTE_FIRMWARE_URL_HERE (loaded from NVS at boot)
+String otaFirmwareUrl = "https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/firmware.bin";      // Default raw binary URL
+String otaDescriptorUrl = "https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/version.json";  // Default JSON descriptor URL
 // ─────────────────────────────────────────────────────────────
 String otaStatus      = "idle";  // [OTA] idle | starting | downloading | flashing | success | failed
 bool   otaInProgress  = false;   // [OTA] Guard flag — prevents concurrent OTA attempts
+bool   otaAutoUpdate  = false;   // [OTA] Automatically check and update at boot
 
 // Forward declarations
 void parseGsmResponse(String line);
@@ -284,6 +286,7 @@ void setupWebServer();
 bool isAuth();
 void sendLargePage(const char* data);
 void changeState(CallState newState);
+void otaAutoCheckTask(void* pvParameters);
 
 
 
@@ -524,6 +527,65 @@ void triggerOtaUpdate() {
   webLog("[OTA] Spawning OTA task on Core 1...");
   // [OTA] 16 KB stack — required for TLS handshake + Update write buffer
   xTaskCreatePinnedToCore(otaTask, "ota_task", 16384, NULL, 1, NULL, 1);
+}
+
+// [OTA AUTO] Automatic background update task at startup
+void otaAutoCheckTask(void* pvParameters) {
+  webLog("[OTA AUTO] Checking for updates at boot...");
+  
+  if (otaDescriptorUrl.length() == 0) {
+    webLog("[OTA AUTO] Descriptor URL is empty. Aborting auto-update.");
+    vTaskDelete(NULL);
+    return;
+  }
+  
+  // Wait a few seconds for network interfaces to stabilize
+  vTaskDelay(pdMS_TO_TICKS(5000));
+  
+  WiFiClientSecure secureClient;
+  secureClient.setInsecure();
+  
+  HTTPClient http;
+  bool begun = http.begin(secureClient, otaDescriptorUrl);
+  if (!begun) {
+    webLog("[OTA AUTO] Failed to connect to version descriptor URL.");
+    vTaskDelete(NULL);
+    return;
+  }
+
+  int httpCode = http.GET();
+  if (httpCode == HTTP_CODE_OK) {
+    String payload = http.getString();
+    StaticJsonDocument<512> doc;
+    DeserializationError error = deserializeJson(doc, payload);
+    
+    if (!error) {
+      const char* newVersion = doc["version"];
+      const char* binUrl = doc["url"];
+      
+      if (newVersion && binUrl && strcmp(newVersion, FIRMWARE_VERSION) != 0) {
+        webLog("[OTA AUTO] New version found: " + String(newVersion) + " (current: " + FIRMWARE_VERSION + ")");
+        webLog("[OTA AUTO] Starting auto-update from: " + String(binUrl));
+        
+        // Save URL to otaFirmwareUrl and trigger update
+        otaFirmwareUrl = String(binUrl);
+        preferences.begin("wifi-config", false);
+        preferences.putString("otaUrl", otaFirmwareUrl);
+        preferences.end();
+        
+        triggerOtaUpdate();
+      } else {
+        webLog("[OTA AUTO] Firmware is up-to-date.");
+      }
+    } else {
+      webLog("[OTA AUTO] Failed to parse version JSON descriptor.");
+    }
+  } else {
+    webLog("[OTA AUTO] Failed to fetch version descriptor, HTTP Code: " + String(httpCode));
+  }
+  
+  http.end();
+  vTaskDelete(NULL);
 }
 // ==================== END OTA UPDATE ====================
 
@@ -1763,9 +1825,43 @@ void setupWebServer() {
     doc["inProgress"] = otaInProgress;
     doc["urlSet"]     = (otaFirmwareUrl.length() > 0); // [OTA] true if URL has been saved
     doc["url"]        = otaFirmwareUrl;                // [OTA] Return URL so dashboard can show it
+    doc["descriptorUrl"] = otaDescriptorUrl;
+    doc["autoUpdate"] = otaAutoUpdate;                 // Return auto-update state
     String resp;
     serializeJson(doc, resp);
     server.send(200, "application/json", resp);
+  });
+
+  // [OTA] POST /api/ota_save_descriptor — Saves descriptor URL to NVS.
+  server.on("/api/ota_save_descriptor", HTTP_POST, []() {
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    if (!server.hasArg("url")) {
+      server.send(400, "application/json", "{\"error\":\"Missing url parameter\"}");
+      return;
+    }
+    String newUrl = server.arg("url");
+    newUrl.trim();
+    otaDescriptorUrl = newUrl;                        // Update runtime variable
+    preferences.begin("wifi-config", false);
+    preferences.putString("otaDescUrl", otaDescriptorUrl); // Persist to NVS
+    preferences.end();
+    webLog("[OTA] Descriptor URL saved: " + otaDescriptorUrl);
+    server.send(200, "application/json", "{\"success\":true}");
+  });
+
+  // [OTA] POST /api/ota_auto_update — Save auto update preference.
+  server.on("/api/ota_auto_update", HTTP_POST, []() {
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    if (server.hasArg("enabled")) {
+      otaAutoUpdate = (server.arg("enabled") == "true");
+      preferences.begin("wifi-config", false);
+      preferences.putBool("otaAuto", otaAutoUpdate);
+      preferences.end();
+      webLog("[OTA] Auto-update config saved: " + String(otaAutoUpdate ? "ENABLED" : "DISABLED"));
+      server.send(200, "application/json", "{\"success\":true}");
+    } else {
+      server.send(400, "application/json", "{\"error\":\"Missing enabled parameter\"}");
+    }
   });
 
   // [OTA] GET /ota_get_url — Returns the saved firmware URL (requires auth).
@@ -1955,7 +2051,9 @@ void setup() {
   
   callSystemActive = preferences.getBool("callSysAct", true);
   smsSystemActive = preferences.getBool("smsSysAct", true);
-  otaFirmwareUrl  = preferences.getString("otaUrl", ""); // [OTA] Load saved firmware URL from NVS
+  otaFirmwareUrl  = preferences.getString("otaUrl", "https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/firmware.bin"); // [OTA] Load saved firmware URL from NVS
+  otaDescriptorUrl = preferences.getString("otaDescUrl", "https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/version.json"); // Load saved descriptor URL
+  otaAutoUpdate   = preferences.getBool("otaAuto", false); // [OTA] Load auto update setting
   
   preferences.end();
 
@@ -1991,6 +2089,10 @@ void setup() {
       
       setupWebServer();
       mDNS_begin();
+      if (otaAutoUpdate) {
+        webLog("[OTA AUTO] Spawning auto-update check task...");
+        xTaskCreate(otaAutoCheckTask, "ota_auto_check", 8192, NULL, 1, NULL);
+      }
     } else {
       webLog("WiFi connection timeout. Entering captive portal setup...");
       playErrorSound();

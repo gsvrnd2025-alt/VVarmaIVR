@@ -1767,6 +1767,11 @@
                   <input type="text" id="ota-input-url" class="form-control glass-input" value="https://raw.githubusercontent.com/GSV-RND/VVarmaIVR/main/version.json" placeholder="e.g. https://raw.githubusercontent.com/.../version.json">
                 </div>
 
+                <div class="form-check form-switch form-switch-p mb-3">
+                  <input class="form-check-input" type="checkbox" id="switch-ota-auto-update">
+                  <label class="form-check-label text-white small fw-bold" for="switch-ota-auto-update">Enable Auto Update on Boot</label>
+                </div>
+
                 <div class="d-flex justify-content-between align-items-center mb-3">
                   <span class="text-white small">Status: <strong id="ota-status-label" class="text-warning">Idle</strong></span>
                   <div class="spinner-border spinner-border-sm text-info d-none" id="ota-spinner" role="status"></div>
@@ -1777,9 +1782,12 @@
                   <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" id="ota-progress-bar" role="progressbar" style="width: 0%;"></div>
                 </div>
 
-                <div class="btn-action-group mt-auto d-flex gap-2">
+                <div class="btn-action-group mt-auto d-flex gap-2 flex-wrap">
                   <button class="btn btn-glass-info flex-grow-1" id="btn-check-update">
-                    <i class="fa-solid fa-sync me-2"></i>Check for Updates
+                    <i class="fa-solid fa-sync me-2"></i>Check Updates
+                  </button>
+                  <button class="btn btn-glass-secondary flex-grow-1" id="btn-test-ota-connection">
+                    <i class="fa-solid fa-plug-circle-check me-2"></i>Test Connection
                   </button>
                   <button class="btn btn-glass-success flex-grow-1 d-none" id="btn-start-update">
                     <i class="fa-solid fa-download me-2"></i>Install Update

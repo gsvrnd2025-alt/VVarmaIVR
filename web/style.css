@@ -633,6 +633,7 @@ body.light-theme .glass-card .form-label {
   transition: all var(--t-fast) ease;
   position: relative;
   overflow: hidden;
+  border: 1px solid transparent; /* Prevents layout shift jitter */
 }
 
 .sidebar-link-icon {
@@ -663,7 +664,7 @@ body.light-theme .glass-card .form-label {
 .sidebar-link.active {
   color: #fff;
   background: linear-gradient(135deg, rgba(243, 156, 18, 0.15) 0%, rgba(79, 172, 254, 0.1) 100%);
-  border: 1px solid rgba(243, 156, 18, 0.2);
+  border-color: rgba(243, 156, 18, 0.2); /* Changes border color only */
 }
 
 .sidebar-link.active .sidebar-link-icon {
@@ -4937,5 +4938,37 @@ body.light-theme .text-white:not(.btn):not(.btn *):not(.badge):not(.badge *):not
 .table-responsive {
   max-height: 400px;
   overflow-y: auto !important;
+}
+
+/* Premium Glassmorphic Nav Pills */
+.nav-pills .nav-link {
+  border-radius: 8px;
+  transition: all 0.3s ease;
+  border: 1px solid transparent;
+  color: var(--text-muted) !important;
+  font-weight: 500;
+}
+.nav-pills .nav-link:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff !important;
+}
+.nav-pills .nav-link.active {
+  background: var(--accent-gradient) !important;
+  border-color: rgba(243, 156, 18, 0.3);
+  box-shadow: 0 4px 12px var(--accent-glow);
+  color: #fff !important;
+}
+
+/* Light Theme overrides for Nav Pills */
+body.light-theme .nav-pills .nav-link {
+  color: #475569 !important;
+}
+body.light-theme .nav-pills .nav-link:hover {
+  background: #f1f5f9;
+  color: #0f172a !important;
+}
+body.light-theme .nav-pills .nav-link.active {
+  background: var(--accent-gradient) !important;
+  color: #fff !important;
 }
 
