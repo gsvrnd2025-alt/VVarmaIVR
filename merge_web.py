@@ -47,10 +47,17 @@ const char index_html[] PROGMEM = R"rawliteral(
 """
     
     # Write to target paths
-    path = os.path.join(script_dir, "GSV_VARMA_IVR", "index_html.h")
-    with open(path, "w", encoding="utf-8") as f:
+    path1 = os.path.join(script_dir, "GSV_VARMA_IVR", "index_html.h")
+    with open(path1, "w", encoding="utf-8") as f:
         f.write(header_content)
-    print(f"Successfully wrote merged header to: {path}")
+    print(f"Successfully wrote merged header to: {path1}")
+
+    path2 = os.path.join(script_dir, "GSV_VARMA_IVR", "ivr_fin", "index_html.h")
+    if os.path.exists(os.path.dirname(path2)):
+        with open(path2, "w", encoding="utf-8") as f:
+            f.write(header_content)
+        print(f"Successfully wrote merged header to: {path2}")
+
 
 if __name__ == "__main__":
     merge_assets()

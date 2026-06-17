@@ -6487,52 +6487,14 @@ body.light-theme .text-white:not(.btn):not(.btn *):not(.badge):not(.badge *):not
              5. DEVICE MANAGEMENT PAGE
         ============================================================ -->
         <section id="eeprom-mgmt" class="page-section">
-          <div class="section-header mb-3">
+          <div class="section-header mb-4">
             <div>
               <h2 class="section-title mb-0">Device Management</h2>
               <p class="text-muted small mt-1 mb-0">Hardware specs, firmware details, runtime metrics &amp; factory reset</p>
             </div>
           </div>
 
-          <!-- ── Device Management Tab Navigation ── -->
-          <ul class="nav nav-pills mb-4" id="devMgmtTabs" role="tablist" style="gap:0.5rem;flex-wrap:wrap;">
-            <li class="nav-item" role="presentation">
-              <button class="nav-link active" id="tab-hw-btn" data-bs-toggle="pill" data-bs-target="#tab-hw" type="button" role="tab"
-                style="background:rgba(241,137,18,0.12);border:1px solid rgba(241,137,18,0.25);color:#f1f5f9;border-radius:10px;font-size:0.85rem;padding:0.45rem 1.1rem;">
-                <i class="fa-solid fa-microchip me-2 text-info"></i>Hardware
-              </button>
-            </li>
-            <li class="nav-item" role="presentation">
-              <button class="nav-link" id="tab-wifi-btn" data-bs-toggle="pill" data-bs-target="#tab-wifi" type="button" role="tab"
-                style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:#94a3b8;border-radius:10px;font-size:0.85rem;padding:0.45rem 1.1rem;">
-                <i class="fa-solid fa-wifi me-2 text-info"></i>WiFi
-              </button>
-            </li>
-            <li class="nav-item" role="presentation">
-              <button class="nav-link" id="tab-cred-btn" data-bs-toggle="pill" data-bs-target="#tab-cred" type="button" role="tab"
-                style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:#94a3b8;border-radius:10px;font-size:0.85rem;padding:0.45rem 1.1rem;">
-                <i class="fa-solid fa-user-shield me-2 text-warning"></i>Credentials
-              </button>
-            </li>
-            <li class="nav-item" role="presentation">
-              <button class="nav-link" id="tab-ota-btn" data-bs-toggle="pill" data-bs-target="#tab-ota" type="button" role="tab"
-                style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:#94a3b8;border-radius:10px;font-size:0.85rem;padding:0.45rem 1.1rem;"
-                onclick="loadOtaTab()">
-                <i class="fa-solid fa-cloud-arrow-up me-2" style="color:#a855f7;"></i>OTA Settings
-              </button>
-            </li>
-            <li class="nav-item" role="presentation">
-              <button class="nav-link" id="tab-rst-btn" data-bs-toggle="pill" data-bs-target="#tab-rst" type="button" role="tab"
-                style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);color:#94a3b8;border-radius:10px;font-size:0.85rem;padding:0.45rem 1.1rem;">
-                <i class="fa-solid fa-triangle-exclamation me-2 text-danger"></i>Factory Reset
-              </button>
-            </li>
-          </ul>
-
-          <div class="tab-content" id="devMgmtTabContent">
-
-            <!-- ══ TAB 1: HARDWARE ══ -->
-            <div class="tab-pane fade show active" id="tab-hw" role="tabpanel">
+          <!-- System Info Row -->
           <div class="row g-4 mb-4">
             <!-- Hardware Spec Card -->
             <div class="col-lg-6">
@@ -6612,11 +6574,8 @@ body.light-theme .text-white:not(.btn):not(.btn *):not(.badge):not(.badge *):not
               </div>
             </div>
 
-          </div> <!-- end System Info Row -->
-          </div><!-- end tab-hw -->
+          </div>
 
-            <!-- ══ TAB 2: WiFi ══ -->
-            <div class="tab-pane fade" id="tab-wifi" role="tabpanel">
           <!-- WiFi Router Settings -->
           <div class="row g-4 mb-4">
             <!-- WiFi Settings -->
@@ -6660,11 +6619,8 @@ body.light-theme .text-white:not(.btn):not(.btn *):not(.badge):not(.badge *):not
                 </div>
               </div>
             </div>
-          </div> <!-- end WiFi Settings -->
-          </div><!-- end tab-wifi -->
+          </div>
 
-            <!-- ══ TAB 3: CREDENTIALS ══ -->
-            <div class="tab-pane fade" id="tab-cred" role="tabpanel">
           <!-- AP & Admin Settings Split -->
           <div class="row g-4 mb-4">
             <!-- Device Credentials Card -->
@@ -6722,86 +6678,9 @@ body.light-theme .text-white:not(.btn):not(.btn *):not(.badge):not(.badge *):not
                 </div>
               </div>
             </div>
-          </div> <!-- end Credentials Row -->
-          </div><!-- end tab-cred -->
+          </div>
 
-            <!-- ══ TAB 4: OTA SETTINGS ══ -->
-            <div class="tab-pane fade" id="tab-ota" role="tabpanel">
-              <div class="row g-4">
-                <div class="col-lg-8">
-                  <div class="glass-card d-flex flex-column" style="border-color:rgba(168,85,247,0.25);">
-                    <h5 class="card-section-title"><i class="fa-solid fa-cloud-arrow-up me-2" style="color:#a855f7;"></i>OTA Firmware Update</h5>
-                    <p class="text-white small" style="opacity:0.75;">Enter the direct download URL of your compiled <code>.bin</code> firmware file. Supports both <strong>GitHub Releases</strong> and raw HTTP/HTTPS links. The URL is saved to flash and persists across reboots.</p>
-
-                    <!-- URL Input -->
-                    <div class="mb-3">
-                      <label class="form-label text-white small fw-bold">Firmware Binary URL</label>
-                      <div class="d-flex gap-2">
-                        <input type="url" id="ota-url-input" class="form-control glass-input flex-grow-1"
-                          placeholder="https://github.com/user/repo/releases/download/v1.0/firmware.bin">
-                        <button class="btn btn-glass-success" id="btn-ota-save-url" onclick="otaSaveUrl()" style="white-space:nowrap;">
-                          <i class="fa-solid fa-save me-1"></i>Save URL
-                        </button>
-                      </div>
-                      <div class="mt-1" style="font-size:0.75rem;color:#94a3b8;">
-                        <i class="fa-solid fa-circle-info me-1 text-info"></i>
-                        Use a <strong>GitHub Releases</strong> asset URL ending in <code>.bin</code>. Do not use the GitHub blob viewer link.
-                      </div>
-                    </div>
-
-                    <!-- Saved URL display -->
-                    <div class="mb-4 p-3 rounded" style="background:rgba(168,85,247,0.07);border:1px solid rgba(168,85,247,0.18);">
-                      <div class="d-flex align-items-center gap-2 mb-1">
-                        <i class="fa-solid fa-link" style="color:#a855f7;font-size:0.8rem;"></i>
-                        <span class="text-white small fw-bold">Saved Firmware URL</span>
-                      </div>
-                      <div id="ota-saved-url" class="digital-font" style="font-size:0.75rem;color:#cbd5e1;word-break:break-all;">Loading...</div>
-                    </div>
-
-                    <!-- Trigger Button -->
-                    <div class="btn-action-group mt-auto">
-                      <button class="btn flex-grow-1 fw-bold" id="btn-ota-trigger" onclick="otaTrigger()"
-                        style="background:linear-gradient(135deg,#a855f7,#7c3aed);border:none;color:#fff;border-radius:12px;padding:0.65rem 1.5rem;">
-                        <i class="fa-solid fa-rocket me-2"></i>Flash Firmware Now
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- OTA Status Panel -->
-                <div class="col-lg-4">
-                  <div class="glass-card d-flex flex-column" style="border-color:rgba(168,85,247,0.18);">
-                    <h5 class="card-section-title"><i class="fa-solid fa-satellite-dish me-2" style="color:#a855f7;"></i>Update Status</h5>
-
-                    <div class="text-center py-3">
-                      <div id="ota-status-icon" style="font-size:2.5rem;margin-bottom:0.75rem;">&#x1F4E1;</div>
-                      <div id="ota-status-label" class="fw-bold" style="font-size:1.05rem;color:#f1f5f9;">Idle</div>
-                      <div id="ota-status-sub" class="small mt-1" style="color:#94a3b8;">No update in progress</div>
-                    </div>
-
-                    <!-- Progress bar (shown during update) -->
-                    <div id="ota-progress-wrap" style="display:none;" class="mt-2">
-                      <div class="progress" style="height:8px;border-radius:4px;background:rgba(168,85,247,0.15);">
-                        <div id="ota-progress-bar" class="progress-bar"
-                          style="background:linear-gradient(90deg,#a855f7,#7c3aed);width:0%;transition:width 0.4s ease;"></div>
-                      </div>
-                      <div id="ota-progress-pct" class="text-center mt-1" style="font-size:0.7rem;color:#a855f7;">0%</div>
-                    </div>
-
-                    <div class="mt-auto pt-3" style="border-top:1px solid rgba(168,85,247,0.15);">
-                      <div class="info-row" style="border:none;padding:0.25rem 0;">
-                        <span class="info-label" style="font-size:0.75rem;">Current FW</span>
-                        <span class="info-value digital-font" id="ota-current-fw" style="font-size:0.75rem;">—</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div><!-- end tab-ota -->
-
-            <!-- ══ TAB 5: FACTORY RESET ══ -->
-            <div class="tab-pane fade" id="tab-rst" role="tabpanel">
-          <!-- Factory Reset -->
+          <!-- Factory Reset & Software Update -->
           <div class="row g-4">
             <div class="col-lg-6">
               <div class="glass-card danger-zone-card d-flex flex-column">
@@ -6825,10 +6704,39 @@ body.light-theme .text-white:not(.btn):not(.btn *):not(.badge):not(.badge *):not
                 </div>
               </div>
             </div>
-          </div> <!-- end Factory Reset row -->
-          </div><!-- end tab-rst -->
 
-          </div><!-- end tab-content -->
+            <!-- Software Update (OTA) -->
+            <div class="col-lg-6">
+              <div class="glass-card d-flex flex-column" id="card-ota-update">
+                <h5 class="card-section-title text-info"><i class="fa-solid fa-cloud-arrow-up me-2"></i>Software Update &amp; Config</h5>
+                <p class="text-white small" style="opacity: 0.75;">Configure firmware update repository and check for updates. Current version: <span class="badge bg-primary" id="ota-current-version">v1.1-IVR</span></p>
+
+                <div class="mb-3">
+                  <label for="ota-input-url" class="form-label text-white small fw-bold">Firmware JSON Descriptor URL</label>
+                  <input type="text" id="ota-input-url" class="form-control glass-input" value="https://raw.githubusercontent.com/g-s-vrnd2025/VVarmaIVR/main/version.json" placeholder="e.g. https://raw.githubusercontent.com/.../version.json">
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                  <span class="text-white small">Status: <strong id="ota-status-label" class="text-warning">Idle</strong></span>
+                  <div class="spinner-border spinner-border-sm text-info d-none" id="ota-spinner" role="status"></div>
+                </div>
+
+                <!-- OTA Progress Bar -->
+                <div class="progress d-none mb-3" id="ota-progress-wrap" style="height: 10px; background: rgba(255,255,255,0.1);">
+                  <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" id="ota-progress-bar" role="progressbar" style="width: 0%;"></div>
+                </div>
+
+                <div class="btn-action-group mt-auto d-flex gap-2">
+                  <button class="btn btn-glass-info flex-grow-1" id="btn-check-update">
+                    <i class="fa-solid fa-sync me-2"></i>Check for Updates
+                  </button>
+                  <button class="btn btn-glass-success flex-grow-1 d-none" id="btn-start-update">
+                    <i class="fa-solid fa-download me-2"></i>Install Update
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </section>
 
         <!-- ============================================================
@@ -9873,7 +9781,205 @@ function bindEventHandlers() {
       showToast('Notifications', 'Cleared all notifications', 'info');
     });
   }
+
+  // Initialize OTA software update handlers
+  initOtaHandlers();
 }
+
+function initOtaHandlers() {
+  const currentVersion = 'v1.1-IVR';
+  const currentVersionEl = document.getElementById('ota-current-version');
+  if (currentVersionEl) currentVersionEl.textContent = currentVersion;
+
+  // 1. Fetch saved URL on load
+  const loadSavedOtaUrl = async () => {
+    try {
+      const res = await fetch('/ota_status');
+      if (res.ok) {
+        const data = await res.json();
+        const urlInput = document.getElementById('ota-input-url');
+        if (urlInput && data.url) {
+          urlInput.value = data.url;
+        }
+      }
+    } catch (err) {
+      console.warn('[OTA] Could not load saved OTA URL:', err);
+    }
+  };
+  loadSavedOtaUrl();
+
+  // 2. Check for updates
+  let updateInfo = null;
+  bindClick('btn-check-update', async () => {
+    const checkBtn = document.getElementById('btn-check-update');
+    const startBtn = document.getElementById('btn-start-update');
+    const statusLabel = document.getElementById('ota-status-label');
+    const spinner = document.getElementById('ota-spinner');
+    const urlInput = document.getElementById('ota-input-url');
+
+    if (!urlInput || !checkBtn || !statusLabel) return;
+
+    const url = urlInput.value.trim();
+    if (!url) {
+      alert('Please enter a valid version JSON descriptor URL.');
+      return;
+    }
+
+    checkBtn.disabled = true;
+    if (spinner) spinner.classList.remove('d-none');
+    statusLabel.textContent = 'Checking for updates...';
+    if (startBtn) startBtn.classList.add('d-none');
+
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      updateInfo = await res.json();
+
+      if (updateInfo && updateInfo.version) {
+        const newVersion = updateInfo.version;
+        if (newVersion !== currentVersion) {
+          statusLabel.innerHTML = `<span class="text-success">New version ${newVersion} is available!</span>`;
+          if (startBtn) startBtn.classList.remove('d-none');
+          showToast('Software Update', `New firmware version ${newVersion} is available!`, 'success');
+          addNotification('Software Update', `Firmware version ${newVersion} is available for installation.`, 'warning');
+        } else {
+          statusLabel.innerHTML = `<span class="text-info">Firmware is up-to-date (v1.1-IVR)</span>`;
+          showToast('Software Update', 'Your firmware is already up-to-date.', 'info');
+        }
+      } else {
+        throw new Error('Invalid JSON format');
+      }
+    } catch (err) {
+      console.error('Update check error:', err);
+      statusLabel.innerHTML = `<span class="text-danger">Failed to check updates: ${err.message}</span>`;
+      showToast('Update Check Failed', 'Could not read version details from the URL.', 'danger');
+    } finally {
+      checkBtn.disabled = false;
+      if (spinner) spinner.classList.add('d-none');
+    }
+  });
+
+  // 3. Start update
+  let pollInterval = null;
+  bindClick('btn-start-update', async () => {
+    if (!updateInfo || !updateInfo.url) {
+      alert('Please check for updates first.');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to install version ${updateInfo.version}? The device will reboot automatically after installation.`)) {
+      return;
+    }
+
+    const startBtn = document.getElementById('btn-start-update');
+    const checkBtn = document.getElementById('btn-check-update');
+    const statusLabel = document.getElementById('ota-status-label');
+    const progressWrap = document.getElementById('ota-progress-wrap');
+    const progressBar = document.getElementById('ota-progress-bar');
+    const spinner = document.getElementById('ota-spinner');
+
+    if (startBtn) startBtn.classList.add('d-none');
+    if (checkBtn) checkBtn.disabled = true;
+    if (statusLabel) statusLabel.textContent = 'Saving URL...';
+    if (progressWrap) progressWrap.classList.remove('d-none');
+    if (progressBar) {
+      progressBar.style.width = '10%';
+      progressBar.textContent = '10%';
+    }
+    if (spinner) spinner.classList.remove('d-none');
+
+    try {
+      const saveParams = new URLSearchParams();
+      saveParams.append('url', updateInfo.url);
+      let res = await fetch('/ota_save_url', { method: 'POST', body: saveParams });
+      if (!res.ok) throw new Error('Save URL failed: HTTP ' + res.status);
+
+      statusLabel.textContent = 'Triggering flash update...';
+      if (progressBar) {
+        progressBar.style.width = '25%';
+        progressBar.textContent = '25%';
+      }
+      res = await fetch('/ota_trigger', { method: 'POST' });
+      if (!res.ok) throw new Error('Trigger OTA failed: HTTP ' + res.status);
+
+      pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await fetch('/ota_status');
+          if (statusRes.ok) {
+            const data = await statusRes.json();
+            if (data.status === 'starting') {
+              statusLabel.textContent = 'Preparing device partitions...';
+              if (progressBar) {
+                progressBar.style.width = '35%';
+                progressBar.textContent = '35%';
+              }
+            } else if (data.status === 'downloading') {
+              statusLabel.textContent = 'Downloading firmware binary...';
+              if (progressBar) {
+                progressBar.style.width = '60%';
+                progressBar.textContent = '60%';
+              }
+            } else if (data.status === 'flashing') {
+              statusLabel.textContent = 'Writing blocks to flash...';
+              if (progressBar) {
+                progressBar.style.width = '85%';
+                progressBar.textContent = '85%';
+              }
+            } else if (data.status === 'success') {
+              clearInterval(pollInterval);
+              statusLabel.innerHTML = '<span class="text-success fw-bold">Update Successful! Rebooting device...</span>';
+              if (progressBar) {
+                progressBar.style.width = '100%';
+                progressBar.textContent = '100%';
+                progressBar.classList.remove('bg-info');
+                progressBar.classList.add('bg-success');
+              }
+              if (spinner) spinner.classList.add('d-none');
+              showToast('OTA Successful', 'Firmware updated successfully. Rebooting...', 'success');
+              addNotification('System OTA', 'Firmware updated successfully to new version.', 'success');
+
+              let count = 6;
+              const countdownInterval = setInterval(() => {
+                count--;
+                statusLabel.textContent = `Rebooting... Page will reload in ${count}s`;
+                if (count <= 0) {
+                  clearInterval(countdownInterval);
+                  window.location.reload();
+                }
+              }, 1000);
+            } else if (data.status === 'failed') {
+              throw new Error('OTA task reported failure');
+            }
+          }
+        } catch (pollErr) {
+          console.error('[OTA Poll Error]', pollErr);
+          clearInterval(pollInterval);
+          statusLabel.innerHTML = `<span class="text-danger">Update Failed!</span>`;
+          if (progressBar) {
+            progressBar.classList.remove('bg-info');
+            progressBar.classList.add('bg-danger');
+          }
+          if (spinner) spinner.classList.add('d-none');
+          if (checkBtn) checkBtn.disabled = false;
+          showToast('OTA Failed', 'Firmware download/flash failed.', 'danger');
+        }
+      }, 1500);
+
+    } catch (err) {
+      console.error('OTA Error:', err);
+      clearInterval(pollInterval);
+      statusLabel.innerHTML = `<span class="text-danger">Update Failed: ${err.message}</span>`;
+      if (progressBar) {
+        progressBar.classList.remove('bg-info');
+        progressBar.classList.add('bg-danger');
+      }
+      if (spinner) spinner.classList.add('d-none');
+      if (checkBtn) checkBtn.disabled = false;
+      showToast('OTA Failed', err.message, 'danger');
+    }
+  });
+}
+
 
 // ============================================================
 // CALL HISTORY DATA GENERATOR
@@ -14005,145 +14111,6 @@ window.icSendSMS = icSendSMS;
 document.addEventListener('DOMContentLoaded', () => {
   initSimulator();
 });
-
-// ==================== OTA UPDATE JAVASCRIPT ====================
-let _otaPollTimer = null;
-
-/** Called when the OTA Settings tab is clicked — loads saved URL and current status. */
-async function loadOtaTab() {
-  try {
-    const res  = await fetch('/ota_status');
-    const data = await res.json();
-    // Populate URL input with saved value
-    const input = document.getElementById('ota-url-input');
-    const saved = document.getElementById('ota-saved-url');
-    const fwEl  = document.getElementById('ota-current-fw');
-    if (input && data.url) input.value = data.url;
-    if (saved) saved.textContent = data.url && data.url.length > 0 ? data.url : '(not set)';
-    if (fwEl)  fwEl.textContent  = document.getElementById('sys-firmware-version')?.textContent || '—';
-    _otaUpdateStatusUI(data.status, data.inProgress);
-  } catch(e) {
-    const saved = document.getElementById('ota-saved-url');
-    if (saved) saved.textContent = 'Could not reach device';
-  }
-}
-
-/** Saves the firmware URL to device NVS via POST /ota_save_url */
-async function otaSaveUrl() {
-  const input = document.getElementById('ota-url-input');
-  const btn   = document.getElementById('btn-ota-save-url');
-  if (!input) return;
-  const url = input.value.trim();
-  if (!url) { showToast('OTA', 'Please enter a firmware URL first.', 'warning'); return; }
-  if (!url.startsWith('http://') && !url.startsWith('https://')) {
-    showToast('OTA', 'URL must start with http:// or https://', 'warning'); return;
-  }
-  if (!url.endsWith('.bin')) {
-    if (!confirm('URL does not end in .bin — are you sure this is a firmware binary?')) return;
-  }
-  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i>Saving…'; }
-  try {
-    const fd = new FormData();
-    fd.append('url', url);
-    const res  = await fetch('/ota_save_url', { method: 'POST', body: fd });
-    const data = await res.json();
-    if (data.success) {
-      const saved = document.getElementById('ota-saved-url');
-      if (saved) saved.textContent = url;
-      showToast('OTA', 'Firmware URL saved to device flash.', 'success');
-    } else {
-      showToast('OTA Error', data.error || 'Save failed', 'danger');
-    }
-  } catch(e) {
-    showToast('OTA Error', 'Network error: ' + e.message, 'danger');
-  }
-  if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-save me-1"></i>Save URL'; }
-}
-
-/** Triggers the OTA firmware flash via POST /ota_trigger */
-async function otaTrigger() {
-  const saved = document.getElementById('ota-saved-url');
-  const url   = saved?.textContent || '';
-  if (!url || url === '(not set)' || url === 'Loading...') {
-    showToast('OTA', 'Save a firmware URL first before flashing.', 'warning'); return;
-  }
-  if (!confirm('⚠️ This will download and flash new firmware.\nThe device will REBOOT after flashing.\n\nContinue?')) return;
-
-  const trigBtn = document.getElementById('btn-ota-trigger');
-  if (trigBtn) { trigBtn.disabled = true; trigBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-2"></i>Starting…'; }
-
-  try {
-    const res  = await fetch('/ota_trigger', { method: 'POST' });
-    const data = await res.json();
-    if (data.success) {
-      showToast('OTA', 'Firmware download started! Polling for progress…', 'info');
-      _otaStartPolling();
-    } else {
-      showToast('OTA Error', data.error || 'Trigger failed', 'danger');
-      if (trigBtn) { trigBtn.disabled = false; trigBtn.innerHTML = '<i class="fa-solid fa-rocket me-2"></i>Flash Firmware Now'; }
-    }
-  } catch(e) {
-    showToast('OTA Error', 'Network error: ' + e.message, 'danger');
-    if (trigBtn) { trigBtn.disabled = false; trigBtn.innerHTML = '<i class="fa-solid fa-rocket me-2"></i>Flash Firmware Now'; }
-  }
-}
-
-/** Poll /ota_status every 2 seconds while an update is in progress */
-function _otaStartPolling() {
-  if (_otaPollTimer) clearInterval(_otaPollTimer);
-  let pct = 0;
-  document.getElementById('ota-progress-wrap') && (document.getElementById('ota-progress-wrap').style.display = 'block');
-  _otaPollTimer = setInterval(async () => {
-    try {
-      const res  = await fetch('/ota_status');
-      const data = await res.json();
-      _otaUpdateStatusUI(data.status, data.inProgress);
-      // Simulate incremental progress bar
-      if (data.status === 'downloading') { pct = Math.min(pct + 8, 45); }
-      else if (data.status === 'flashing') { pct = Math.min(pct + 12, 90); }
-      else if (data.status === 'success')  { pct = 100; }
-      _otaSetProgress(pct);
-      if (data.status === 'success' || data.status === 'failed' || !data.inProgress) {
-        clearInterval(_otaPollTimer); _otaPollTimer = null;
-        const trigBtn = document.getElementById('btn-ota-trigger');
-        if (trigBtn) { trigBtn.disabled = false; trigBtn.innerHTML = '<i class="fa-solid fa-rocket me-2"></i>Flash Firmware Now'; }
-        if (data.status === 'success') {
-          showToast('OTA Success', 'Firmware flashed! Device rebooting now…', 'success');
-        } else if (data.status === 'failed') {
-          showToast('OTA Failed', 'Update failed. Check the serial log for details.', 'danger');
-          document.getElementById('ota-progress-wrap') && (document.getElementById('ota-progress-wrap').style.display = 'none');
-        }
-      }
-    } catch(e) { /* device may be rebooting */ }
-  }, 2000);
-}
-
-/** Update the status icon, label, and sub-text */
-function _otaUpdateStatusUI(status, inProgress) {
-  const icon  = document.getElementById('ota-status-icon');
-  const label = document.getElementById('ota-status-label');
-  const sub   = document.getElementById('ota-status-sub');
-  const map = {
-    idle:        { i: '📡', l: 'Idle',         s: 'Ready to update', c: '#94a3b8' },
-    starting:    { i: '🔄', l: 'Starting…',    s: 'Initialising update task', c: '#a855f7' },
-    downloading: { i: '⬇️',  l: 'Downloading', s: 'Fetching firmware binary', c: '#3b82f6' },
-    flashing:    { i: '⚡',  l: 'Flashing…',   s: 'Writing to ESP32 flash', c: '#f97316' },
-    success:     { i: '✅',  l: 'Success!',    s: 'Device is rebooting', c: '#2ecc71' },
-    failed:      { i: '❌',  l: 'Failed',      s: 'Check serial log for error', c: '#ef4444' },
-  };
-  const st = map[status] || map.idle;
-  if (icon)  icon.textContent  = st.i;
-  if (label) { label.textContent = st.l; label.style.color = st.c; }
-  if (sub)   sub.textContent   = st.s;
-}
-
-function _otaSetProgress(pct) {
-  const bar  = document.getElementById('ota-progress-bar');
-  const text = document.getElementById('ota-progress-pct');
-  if (bar)  bar.style.width   = pct + '%';
-  if (text) text.textContent  = Math.round(pct) + '%';
-}
-// ==================== END OTA UPDATE JAVASCRIPT ====================
 
 </script>
 

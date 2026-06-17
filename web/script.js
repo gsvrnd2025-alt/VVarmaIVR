@@ -2257,7 +2257,205 @@ function bindEventHandlers() {
       showToast('Notifications', 'Cleared all notifications', 'info');
     });
   }
+
+  // Initialize OTA software update handlers
+  initOtaHandlers();
 }
+
+function initOtaHandlers() {
+  const currentVersion = 'v1.1-IVR';
+  const currentVersionEl = document.getElementById('ota-current-version');
+  if (currentVersionEl) currentVersionEl.textContent = currentVersion;
+
+  // 1. Fetch saved URL on load
+  const loadSavedOtaUrl = async () => {
+    try {
+      const res = await fetch('/ota_status');
+      if (res.ok) {
+        const data = await res.json();
+        const urlInput = document.getElementById('ota-input-url');
+        if (urlInput && data.url) {
+          urlInput.value = data.url;
+        }
+      }
+    } catch (err) {
+      console.warn('[OTA] Could not load saved OTA URL:', err);
+    }
+  };
+  loadSavedOtaUrl();
+
+  // 2. Check for updates
+  let updateInfo = null;
+  bindClick('btn-check-update', async () => {
+    const checkBtn = document.getElementById('btn-check-update');
+    const startBtn = document.getElementById('btn-start-update');
+    const statusLabel = document.getElementById('ota-status-label');
+    const spinner = document.getElementById('ota-spinner');
+    const urlInput = document.getElementById('ota-input-url');
+
+    if (!urlInput || !checkBtn || !statusLabel) return;
+
+    const url = urlInput.value.trim();
+    if (!url) {
+      alert('Please enter a valid version JSON descriptor URL.');
+      return;
+    }
+
+    checkBtn.disabled = true;
+    if (spinner) spinner.classList.remove('d-none');
+    statusLabel.textContent = 'Checking for updates...';
+    if (startBtn) startBtn.classList.add('d-none');
+
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      updateInfo = await res.json();
+
+      if (updateInfo && updateInfo.version) {
+        const newVersion = updateInfo.version;
+        if (newVersion !== currentVersion) {
+          statusLabel.innerHTML = `<span class="text-success">New version ${newVersion} is available!</span>`;
+          if (startBtn) startBtn.classList.remove('d-none');
+          showToast('Software Update', `New firmware version ${newVersion} is available!`, 'success');
+          addNotification('Software Update', `Firmware version ${newVersion} is available for installation.`, 'warning');
+        } else {
+          statusLabel.innerHTML = `<span class="text-info">Firmware is up-to-date (v1.1-IVR)</span>`;
+          showToast('Software Update', 'Your firmware is already up-to-date.', 'info');
+        }
+      } else {
+        throw new Error('Invalid JSON format');
+      }
+    } catch (err) {
+      console.error('Update check error:', err);
+      statusLabel.innerHTML = `<span class="text-danger">Failed to check updates: ${err.message}</span>`;
+      showToast('Update Check Failed', 'Could not read version details from the URL.', 'danger');
+    } finally {
+      checkBtn.disabled = false;
+      if (spinner) spinner.classList.add('d-none');
+    }
+  });
+
+  // 3. Start update
+  let pollInterval = null;
+  bindClick('btn-start-update', async () => {
+    if (!updateInfo || !updateInfo.url) {
+      alert('Please check for updates first.');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to install version ${updateInfo.version}? The device will reboot automatically after installation.`)) {
+      return;
+    }
+
+    const startBtn = document.getElementById('btn-start-update');
+    const checkBtn = document.getElementById('btn-check-update');
+    const statusLabel = document.getElementById('ota-status-label');
+    const progressWrap = document.getElementById('ota-progress-wrap');
+    const progressBar = document.getElementById('ota-progress-bar');
+    const spinner = document.getElementById('ota-spinner');
+
+    if (startBtn) startBtn.classList.add('d-none');
+    if (checkBtn) checkBtn.disabled = true;
+    if (statusLabel) statusLabel.textContent = 'Saving URL...';
+    if (progressWrap) progressWrap.classList.remove('d-none');
+    if (progressBar) {
+      progressBar.style.width = '10%';
+      progressBar.textContent = '10%';
+    }
+    if (spinner) spinner.classList.remove('d-none');
+
+    try {
+      const saveParams = new URLSearchParams();
+      saveParams.append('url', updateInfo.url);
+      let res = await fetch('/ota_save_url', { method: 'POST', body: saveParams });
+      if (!res.ok) throw new Error('Save URL failed: HTTP ' + res.status);
+
+      statusLabel.textContent = 'Triggering flash update...';
+      if (progressBar) {
+        progressBar.style.width = '25%';
+        progressBar.textContent = '25%';
+      }
+      res = await fetch('/ota_trigger', { method: 'POST' });
+      if (!res.ok) throw new Error('Trigger OTA failed: HTTP ' + res.status);
+
+      pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await fetch('/ota_status');
+          if (statusRes.ok) {
+            const data = await statusRes.json();
+            if (data.status === 'starting') {
+              statusLabel.textContent = 'Preparing device partitions...';
+              if (progressBar) {
+                progressBar.style.width = '35%';
+                progressBar.textContent = '35%';
+              }
+            } else if (data.status === 'downloading') {
+              statusLabel.textContent = 'Downloading firmware binary...';
+              if (progressBar) {
+                progressBar.style.width = '60%';
+                progressBar.textContent = '60%';
+              }
+            } else if (data.status === 'flashing') {
+              statusLabel.textContent = 'Writing blocks to flash...';
+              if (progressBar) {
+                progressBar.style.width = '85%';
+                progressBar.textContent = '85%';
+              }
+            } else if (data.status === 'success') {
+              clearInterval(pollInterval);
+              statusLabel.innerHTML = '<span class="text-success fw-bold">Update Successful! Rebooting device...</span>';
+              if (progressBar) {
+                progressBar.style.width = '100%';
+                progressBar.textContent = '100%';
+                progressBar.classList.remove('bg-info');
+                progressBar.classList.add('bg-success');
+              }
+              if (spinner) spinner.classList.add('d-none');
+              showToast('OTA Successful', 'Firmware updated successfully. Rebooting...', 'success');
+              addNotification('System OTA', 'Firmware updated successfully to new version.', 'success');
+
+              let count = 6;
+              const countdownInterval = setInterval(() => {
+                count--;
+                statusLabel.textContent = `Rebooting... Page will reload in ${count}s`;
+                if (count <= 0) {
+                  clearInterval(countdownInterval);
+                  window.location.reload();
+                }
+              }, 1000);
+            } else if (data.status === 'failed') {
+              throw new Error('OTA task reported failure');
+            }
+          }
+        } catch (pollErr) {
+          console.error('[OTA Poll Error]', pollErr);
+          clearInterval(pollInterval);
+          statusLabel.innerHTML = `<span class="text-danger">Update Failed!</span>`;
+          if (progressBar) {
+            progressBar.classList.remove('bg-info');
+            progressBar.classList.add('bg-danger');
+          }
+          if (spinner) spinner.classList.add('d-none');
+          if (checkBtn) checkBtn.disabled = false;
+          showToast('OTA Failed', 'Firmware download/flash failed.', 'danger');
+        }
+      }, 1500);
+
+    } catch (err) {
+      console.error('OTA Error:', err);
+      clearInterval(pollInterval);
+      statusLabel.innerHTML = `<span class="text-danger">Update Failed: ${err.message}</span>`;
+      if (progressBar) {
+        progressBar.classList.remove('bg-info');
+        progressBar.classList.add('bg-danger');
+      }
+      if (spinner) spinner.classList.add('d-none');
+      if (checkBtn) checkBtn.disabled = false;
+      showToast('OTA Failed', err.message, 'danger');
+    }
+  });
+}
+
 
 // ============================================================
 // CALL HISTORY DATA GENERATOR

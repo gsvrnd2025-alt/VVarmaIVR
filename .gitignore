@@ -22,3 +22,9 @@ libraries/
 # Python cache
 __pycache__/
 *.pyc
+
+# Compiled firmware binaries
+*.bin
+!firmware.bin
+*.elf
+*.map
