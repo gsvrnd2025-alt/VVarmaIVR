@@ -1,0 +1,5 @@
+{
+  "version": "v1.3-IVR",
+  "url": "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/firmware.bin",
+  "notes": "V-VARMA IVR v1.3 - SD card streaming, auto OTA, LED power indicator"
+}

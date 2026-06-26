@@ -3350,8 +3350,9 @@ void otaAutoCheckTask(void* pvParameters) {
     return;
   }
   
-  // Wait a few seconds for network interfaces to stabilize
-  vTaskDelay(pdMS_TO_TICKS(5000));
+  // Wait 15s for network interfaces to fully stabilize and web server to start accepting requests
+  // before making any HTTPS calls that could compete for memory
+  vTaskDelay(pdMS_TO_TICKS(15000));
   
   { // Inner block to destruct C++ objects before FreeRTOS task deletion
     WiFiClientSecure secureClient;
@@ -3997,8 +3998,11 @@ void loop() {
       static bool otaCheckedAtBoot = false;
       if (!otaCheckedAtBoot && otaAutoUpdate) {
         otaCheckedAtBoot = true;
-        webLog("[OTA AUTO] Spawning version auto-check task on Core 1...");
-        xTaskCreatePinnedToCore(otaAutoCheckTask, "ota_auto_task", 8192, NULL, 1, NULL, 1);
+        webLog("[OTA AUTO] Spawning version auto-check task on Core 0 (stack=16KB, pri=0)...");
+        // Stack=16384: WiFiClientSecure TLS needs ~12-14KB minimum (was 8192 — caused stack overflow)
+        // Priority=0: lowest, ensures web server on Core 1 is never starved
+        // Core=0: WiFi runs here, keeps Core 1 (loop/server.handleClient) fully free
+        xTaskCreatePinnedToCore(otaAutoCheckTask, "ota_auto_task", 16384, NULL, 0, NULL, 0);
       }
     } else {
       webLog("[WiFi] STA IP cleared.");
