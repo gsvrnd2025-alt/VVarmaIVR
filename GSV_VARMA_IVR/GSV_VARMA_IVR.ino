@@ -1392,8 +1392,11 @@ bool sendATCommand(String cmd, String expectedResponse, unsigned long timeoutMs)
     gsmModuleConnected = true;
   } else {
     consecutiveFailures++;
-    if (consecutiveFailures >= 3) {
+    // Require 5 consecutive timeouts (was 3) before marking module as offline.
+    // This prevents false-offline from slow modem responses during tower registration.
+    if (consecutiveFailures >= 5) {
       gsmModuleConnected = false;
+      webLog("[GSM] 5 consecutive timeouts — marking module offline.");
     }
   }
   
@@ -3472,6 +3475,14 @@ void initializeGSM(bool isBoot = false) {
     sendATCommand("AT+CEREG?", "+CEREG:", 1500);
     sendATCommand("AT+COPS?",  "+COPS:",  2000);
     sendATCommand("AT+CSQ",    "+CSQ:",   1500);
+    
+    // IMPORTANT: The queries above (CEREG, COPS, CSQ) can timeout if the modem is still
+    // registering on the tower. A timeout sets gsmModuleConnected=false via consecutiveFailures.
+    // Force it back to true here since the module DID respond to the initial AT sync.
+    if (synced) {
+      gsmModuleConnected = true;
+      webLog("[GSM] Module confirmed connected after init.");
+    }
   } else {
     webLog("GSM Module not responding during initialization.");
   }
@@ -3953,11 +3964,12 @@ void loop() {
   // 2. Local client handlers
   server.handleClient();
 
-  // Auto-recovery: If GSM module connection is lost, attempt to re-initialize periodically
+  // Auto-recovery: If GSM module connection is lost, attempt to re-initialize periodically.
+  // Boot guard (90s): tower registration can take 60-90s on power-on — don't fire during that window.
   static unsigned long lastGsmReconnectAttempt = 0;
-  if (!gsmModuleConnected && (millis() - lastGsmReconnectAttempt > 30000)) {
+  if (!gsmModuleConnected && (millis() > 90000) && (millis() - lastGsmReconnectAttempt > 60000)) {
     lastGsmReconnectAttempt = millis();
-    webLog("[GSM Reconnect] GSM is offline. Attempting to re-initialize GSM module (fast reconnect)...");
+    webLog("[GSM Reconnect] GSM is offline after 90s boot guard. Attempting fast reconnect...");
     initializeGSM(false);
   }
 
