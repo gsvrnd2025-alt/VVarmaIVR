@@ -801,17 +801,22 @@ void playErrorSound() {
 
 // ==================== WIFI AP/STA LOGIC ====================
 void mDNS_begin() {
-  bool staActive = (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0));
-  bool apActive = (WiFi.softAPIP() != IPAddress(0, 0, 0, 0) && (WiFi.getMode() == WIFI_AP || WiFi.getMode() == WIFI_AP_STA));
-  if (!staActive && !apActive) return;
+  // CRITICAL: Only start mDNS when STA has a valid IP.
+  // Calling MDNS.begin() before WiFi connects registers the WRONG IP (AP IP or 0.0.0.0)
+  // which gets cached by Windows and blocks access via vvarmaivr.local.
+  IPAddress staIp = WiFi.localIP();
+  if (WiFi.status() != WL_CONNECTED || staIp == IPAddress(0, 0, 0, 0)) {
+    webLog("[mDNS] Skipped — STA not yet connected (will register once IP is assigned).");
+    return;
+  }
 
   MDNS.end();
-  delay(50);
+  delay(100); // Allow mdns stack to fully teardown
   if (MDNS.begin(DEVICE_NAME)) {
     MDNS.addService("_http", "_tcp", 80);
     MDNS.addServiceTxt("_http", "_tcp", "id", myMac);
     MDNS.addServiceTxt("_http", "_tcp", "ver", FIRMWARE_VERSION);
-    webLog("mDNS responder active at http://" + String(DEVICE_NAME) + ".local");
+    webLog("mDNS responder active at http://" + String(DEVICE_NAME) + ".local (IP: " + staIp.toString() + ")");
   } else {
     webLog("CRITICAL: mDNS startup failed");
   }
@@ -859,7 +864,8 @@ void startAPMode() {
   dnsServer.start(53, "*", apIP);
   
   setupWebServer();
-  mDNS_begin();
+  // mDNS is NOT started in AP-only mode — AP users reach the device via 192.168.4.1 directly.
+  // Starting mDNS here would advertise the AP IP (192.168.4.1) and corrupt the STA mDNS cache.
 }
 
 void factoryReset() {
@@ -3456,6 +3462,8 @@ void initializeGSM(bool isBoot = false) {
   
   gsmModuleConnected = synced;
   if (gsmModuleConnected) {
+    sendATCommand("AT+CSCLK=0", "OK", 1000); // Disable slow clock / sleep mode on GSM
+    sendATCommand("AT+CPSMS=0", "OK", 1000); // Disable Power Saving Mode (PSM) on LTE
     sendATCommand("ATS0=0",    "OK", 1000); // Disable hardware auto-answer
     sendATCommand("AT+CMEE=1", "OK", 1000); // Enable numeric error reporting
     sendATCommand("AT+CLIP=1", "OK", 1000); // Enable caller ID
@@ -3828,8 +3836,9 @@ void setup() {
     wifiConnecting = true;
     currentSystemState = SYSTEM_RUNNING;  // Dashboard accessible immediately via AP hotspot
     
-    // Initialize mDNS / NetBIOS under dual mode
-    mDNS_begin();
+    // mDNS is intentionally NOT started here — STA WiFi is still connecting and has no IP yet.
+    // Starting mDNS before IP assignment broadcasts the WRONG IP and corrupts client caches.
+    // mDNS will be started automatically from loop() once the STA IP is confirmed (see WiFi monitor).
   } else {
     // ── AP-ONLY MODE ── No credentials: open hotspot for initial Wi-Fi setup ──
     webLog("[WiFi] No credentials found. Booting in AP-only config mode.");
