@@ -82,7 +82,7 @@ const char wifi_config_html[] PROGMEM = R"rawliteral(
                 </div>
                 <h1 class="logo-title">V-VARMA</h1>
                 <div style="font-size: 0.78rem; color: var(--v-orange); letter-spacing: 2px; font-weight: 700; text-transform: uppercase;">IVR Setup mode</div>
-                <div style="font-size: 0.82rem; color: #888; margin-top: 6px;">Hotspot Network: <strong style="color: #fff;">vvarmaivr</strong></div>
+                <div style="font-size: 0.82rem; color: #888; margin-top: 6px;">Hotspot Network: <strong style="color: #fff;">V VARMA IVR</strong></div>
             </div>
 
             <div class="v-card">
@@ -133,9 +133,9 @@ const char wifi_config_html[] PROGMEM = R"rawliteral(
             <h1 style="color: var(--v-orange); font-weight: 800; letter-spacing: 2px;">REBOOTING DEVICE</h1>
             <p style="margin: 1rem 0; color: #888; font-size: 0.95rem; line-height: 1.5;">The ESP32 is saving configuration parameters and rebooting to join the target Wi-Fi network.</p>
             <div style="background: rgba(255,255,255,0.03); border: 1px solid #333; padding: 15px; border-radius: 12px; font-family: monospace; font-size: 0.85rem; margin-top: 1.5rem; text-align: left; line-height: 1.6;">
-                1. Connect your PC/Phone back to your Wi-Fi router.<br>
-                2. Open the dashboard by navigating to:<br>
-                <strong style="color: #fff; font-size: 0.95rem; display: block; margin-top: 8px; text-align: center;">http://vvarmaivr.local/dashboard</strong>
+                1. Stay connected to the <strong style="color: var(--v-orange);">V VARMA IVR</strong> hotspot and open <a href="http://192.168.4.1/dashboard" style="color: #38bdf8; text-decoration: underline;">http://192.168.4.1/dashboard</a> to find the router IP.<br>
+                2. Or connect to your router Wi-Fi and open the IP address assigned to the ESP32 (e.g., http://&lt;router-ip&gt;/dashboard).<br>
+                3. You can also check your router's client list or the serial monitor trace on boot to find the exact IP address.
             </div>
         </div>
     </div>
@@ -203,9 +203,10 @@ const char wifi_config_html[] PROGMEM = R"rawliteral(
             data.append('adminPass', pw); 
             
             try {
-                // First save Wi-Fi, then save system parameters
+                // First save Wi-Fi (without rebooting), then save system parameters and trigger reboot
+                data.append('reboot', 'false');
                 const res = await fetch('/save_net', { method: 'POST', body: data });
-                const resSys = await fetch('/save_sys?script=' + encodeURIComponent(sid) + '&adminUser=' + encodeURIComponent(u) + '&adminPass=' + encodeURIComponent(pw));
+                const resSys = await fetch('/save_sys?script=' + encodeURIComponent(sid) + '&adminUser=' + encodeURIComponent(u) + '&adminPass=' + encodeURIComponent(pw) + '&reboot=true');
                 
                 if (res.ok && resSys.ok) {
                     msg.innerHTML = "<span style='color:var(--v-green)'>SUCCESS! Rebooting...</span>";
