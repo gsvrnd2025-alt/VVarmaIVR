@@ -1324,6 +1324,21 @@ void changeState(CallState newState) {
 String formatNumberForDialing(String num) {
   num.trim();
   if (num.length() == 0) return "";
+  
+  // Check if it is a text sender ID (contains non-digits other than leading +)
+  int startIdx = num.startsWith("+") ? 1 : 0;
+  bool isNumeric = true;
+  for (int i = startIdx; i < num.length(); i++) {
+    if (!isDigit(num.charAt(i))) {
+      isNumeric = false;
+      break;
+    }
+  }
+  
+  if (!isNumeric) {
+    return num; // Return text sender ID exactly as-is
+  }
+  
   if (num.startsWith("+")) return num;
   if (num.length() == 12 && num.startsWith("91")) return "+" + num;
   if (num.length() == 10) return "+91" + num;

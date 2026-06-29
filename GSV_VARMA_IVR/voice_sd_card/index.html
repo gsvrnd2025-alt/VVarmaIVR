@@ -7754,6 +7754,33 @@ body.light-theme .nav-pills .nav-link.active {
 // GLOBAL STATE
 // ============================================================
 const isRealESP32 = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' && window.location.protocol !== 'file:';
+
+// Global helper for CORS-bypass direct fetch from Google Sheets
+const fetchJsonp = (url, timeoutMs = 15000) => {
+  return new Promise((resolve, reject) => {
+    const callbackName = 'jsonp_' + Math.round(100000 * Math.random());
+    const script = document.createElement('script');
+    const timeoutId = setTimeout(() => {
+      reject(new Error('JSONP Timeout'));
+      cleanup();
+    }, timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      if (script.parentNode) script.parentNode.removeChild(script);
+      delete window[callbackName];
+    };
+    window[callbackName] = (res) => {
+      resolve(res);
+      cleanup();
+    };
+    script.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + callbackName;
+    script.onerror = (err) => {
+      reject(new Error('JSONP Network Error'));
+      cleanup();
+    };
+    document.body.appendChild(script);
+  });
+};
 let currentSection = 'dashboard';
 let systemUptimeSeconds = 86450; // Set a default starting uptime (1d 0h 0m 50s)
 let connectivityCountdown = 5;
@@ -7855,22 +7882,15 @@ async function fetchRegisteredCustomers() {
     if (isRealESP32) {
       if (hasRealUrl) {
         try {
-          console.log('[Customers] Attempting direct browser-to-Sheets fetch for registered customers...');
+          console.log('[Customers] Attempting direct browser-to-Sheets JSONP fetch for registered customers...');
           const directUrl = configuredUrl + (configuredUrl.includes('?') ? '&' : '?') + 'action=get_mobiles';
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s direct fetch timeout
-          
-          const response = await fetch(directUrl, { signal: controller.signal });
-          clearTimeout(timeoutId);
-          if (response.ok) {
-            data = await response.json();
-            if (Array.isArray(data)) {
-              directSuccess = true;
-              console.log('[Customers] Direct browser fetch for registered customers successful!');
-            }
+          data = await fetchJsonp(directUrl, 10000);
+          if (Array.isArray(data)) {
+            directSuccess = true;
+            console.log('[Customers] Direct browser JSONP fetch for registered customers successful!');
           }
         } catch (err) {
-          console.warn('[Customers] Direct fetch failed or timed out, falling back to ESP32 proxy:', err.message);
+          console.warn('[Customers] Direct JSONP fetch failed or timed out, falling back to ESP32 proxy:', err.message);
         }
       }
 
@@ -7888,9 +7908,12 @@ async function fetchRegisteredCustomers() {
     } else {
       // Mock/Dev mode
       if (hasRealUrl) {
-        const directUrl = configuredUrl + (configuredUrl.includes('?') ? '&' : '?') + 'action=get_mobiles';
-        const response = await fetch(directUrl);
-        if (response.ok) data = await response.json();
+        try {
+          const directUrl = configuredUrl + (configuredUrl.includes('?') ? '&' : '?') + 'action=get_mobiles';
+          data = await fetchJsonp(directUrl, 15000);
+        } catch (err) {
+          console.error('[Customers] Mock direct JSONP error:', err.message);
+        }
       }
     }
 
@@ -13991,23 +14014,15 @@ document.addEventListener('DOMContentLoaded', () => {
           let directInitSuccess = false;
           if (hasRealUrl) {
             try {
-              console.log('[VARMA Init] Attempting direct sheets initialization...');
+              console.log('[VARMA Init] Attempting direct sheets initialization via JSONP...');
               const directUrl = configuredUrl + (configuredUrl.includes('?') ? '&' : '?') + 
                 `action=initVarmaSheets&sheetId=${encodeURIComponent(sheetId)}&mac=${encodeURIComponent(mac)}`;
-              
-              const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
-              
-              const res = await fetch(directUrl, { signal: controller.signal });
-              clearTimeout(timeoutId);
-              if (res.ok) {
-                const result = await res.json();
-                if (result && result.success) {
-                  directInitSuccess = true;
-                  showToast('VARMA Panel', '✅ Sheets initialized successfully (Direct)', 'success');
-                  addNotification('Sheets Initialized', 'Google Sheets schema has been set up directly and is ready.', 'success');
-                  fetchVarmaData();
-                }
+              const result = await fetchJsonp(directUrl, 20000);
+              if (result && result.success) {
+                directInitSuccess = true;
+                showToast('VARMA Panel', '✅ Sheets initialized successfully (Direct JSONP)', 'success');
+                addNotification('Sheets Initialized', 'Google Sheets schema has been set up directly and is ready.', 'success');
+                fetchVarmaData();
               }
             } catch (directErr) {
               console.warn('[VARMA Init] Direct sheets init failed, falling back to ESP32 proxy:', directErr.message);
@@ -14165,28 +14180,19 @@ async function fetchVarmaData() {
       
       if (hasRealUrl) {
         try {
-          console.log('[VARMA Sync] Attempting direct browser-to-Sheets fetch...');
+          console.log('[VARMA Sync] Attempting direct browser-to-Sheets JSONP fetch...');
           const directUrl = configuredUrl + (configuredUrl.includes('?') ? '&' : '?') + 
             `action=getVarmaData&sheetId=${encodeURIComponent(sheetId)}&mac=${encodeURIComponent(mac)}`;
           
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s direct fetch timeout
-          
-          const response = await fetch(directUrl, { signal: controller.signal });
-          clearTimeout(timeoutId);
-          if (response.ok) {
-            data = await response.json();
-            if (data && data.ok !== false) {
-              directSuccess = true;
-              console.log('[VARMA Sync] Direct browser sync successful!');
-            } else {
-              console.warn('[VARMA Sync] Direct sync returned unsuccessful status:', data);
-            }
+          data = await fetchJsonp(directUrl, 15000);
+          if (data && data.ok !== false) {
+            directSuccess = true;
+            console.log('[VARMA Sync] Direct browser JSONP sync successful!');
           } else {
-            console.warn('[VARMA Sync] Direct sync server responded with status:', response.status);
+            console.warn('[VARMA Sync] Direct JSONP sync returned unsuccessful status:', data);
           }
         } catch (err) {
-          console.warn('[VARMA Sync] Direct sync fetch failed or timed out, falling back to ESP32 proxy:', err.message);
+          console.warn('[VARMA Sync] Direct JSONP sync fetch failed or timed out, falling back to ESP32 proxy:', err.message);
         }
       }
       
@@ -14576,8 +14582,7 @@ async function fetchHelpCenterNumbers() {
     const url = localStorage.getItem('sheets_script_url') || (typeof esp32State !== 'undefined' && esp32State.googleSheets?.scriptUrl) || '';
     if (!url) return;
     const fetchUrl = `${url}?action=get_hc_numbers`;
-    const res = await fetch(fetchUrl);
-    const data = await res.json();
+    const data = await fetchJsonp(fetchUrl, 15000);
     if (Array.isArray(data)) {
       helpCenterNumbers = data.map(r => ({
         id: String(r.ID || r.id || ''),
@@ -14664,8 +14669,7 @@ async function addHelpCenterNumber() {
       params.append('forwardEnabled', fwd ? 'true' : 'false');
       params.append('smsEnabled', sms ? 'true' : 'false');
       
-      const res = await fetch(`${scriptUrl}?${params.toString()}`);
-      const resJson = await res.json();
+      const resJson = await fetchJsonp(`${scriptUrl}?${params.toString()}`);
       if (resJson.success || resJson.ok) {
         showToast('Help Center', `"${name}" added successfully to Sheets.`, 'success');
       } else {
@@ -14696,8 +14700,7 @@ async function deleteHelpCenterNumber(idx) {
   try {
     const scriptUrl = localStorage.getItem('sheets_script_url') || (typeof esp32State !== 'undefined' && esp32State.googleSheets?.scriptUrl) || '';
     if (scriptUrl && h.id) {
-      const res = await fetch(`${scriptUrl}?action=delete_hc_number&id=${encodeURIComponent(h.id)}`);
-      const resJson = await res.json();
+      const resJson = await fetchJsonp(`${scriptUrl}?action=delete_hc_number&id=${encodeURIComponent(h.id)}`);
       if (resJson.success || resJson.ok) {
         showToast('Help Center', 'Number removed from Sheets.', 'warning');
       } else {
@@ -14738,8 +14741,7 @@ async function editHelpCenterNumber(idx) {
       params.append('forwardEnabled', updated.forwardEnabled ? 'true' : 'false');
       params.append('smsEnabled', updated.smsEnabled ? 'true' : 'false');
 
-      const res = await fetch(`${scriptUrl}?${params.toString()}`);
-      const resJson = await res.json();
+      const resJson = await fetchJsonp(`${scriptUrl}?${params.toString()}`);
       if (resJson.success || resJson.ok) {
         showToast('Help Center', 'Number updated in Sheets.', 'success');
       } else {

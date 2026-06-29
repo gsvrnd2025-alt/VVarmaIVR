@@ -181,9 +181,16 @@ function doGet(e) {
     } else {
       result = getVarmaData();
     }
-    return ContentService
-      .createTextOutput(JSON.stringify(result))
-      .setMimeType(ContentService.MimeType.JSON);
+    var callback = e && e.parameter ? (e.parameter.callback || e.parameter.prefix) : '';
+    if (callback) {
+      return ContentService
+        .createTextOutput(callback + '(' + JSON.stringify(result) + ')')
+        .setMimeType(ContentService.MimeType.JAVASCRIPT);
+    } else {
+      return ContentService
+        .createTextOutput(JSON.stringify(result))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
   }
 
   // Asset Handler (PWA support)
