@@ -574,6 +574,7 @@ bool languageWarningPending = false;
 bool languageDisconnectPending = false;
 String validatingNumber = "";
 unsigned long ringingStartMillis = 0;
+unsigned long validationHoldStart = 0;
 
 // Tracking variables for new IVR call flow
 int incomingRingCount = 0;
@@ -810,8 +811,13 @@ void mDNS_begin() {
     return;
   }
 
+  // Delay slightly to let the LwIP stack fully bind and configure the routing table
+  webLog("[mDNS] Delaying 2s to stabilize LwIP network interface...");
+  delay(2000);
+  staIp = WiFi.localIP(); // Re-read IP after stabilization
+
   MDNS.end();
-  delay(100); // Allow mdns stack to fully teardown
+  delay(200); // Allow mdns stack to fully teardown
   if (MDNS.begin(DEVICE_NAME)) {
     MDNS.addService("_http", "_tcp", 80);
     MDNS.addServiceTxt("_http", "_tcp", "id", myMac);
@@ -1460,6 +1466,14 @@ void parseGsmResponse(String line) {
         webLog("Incoming call. Answering immediately to present Language Selection Menu...");
         validationResult = -1;
         ivrSelectedLanguage = 0;
+        
+        // Start validation task immediately on call receipt
+        ValidateTaskData *vData = new ValidateTaskData();
+        vData->phoneNumber = callerNumber;
+        validatingNumber = callerNumber;
+        webLog("[New IVR] Starting validation check immediately on call receipt: " + callerNumber);
+        xTaskCreatePinnedToCore(validateTask, "validate_task", 6144, (void *)vData, 1, NULL, 0);
+        
         changeState(STATE_ANSWERING);
       } else {
         webLog("Line busy. Rejecting concurrent call from: " + tempNumber + " (current state: " + getStateName(currentCallState) + ")");
@@ -1764,8 +1778,22 @@ void proxyGoogleSheets(String action) {
       client->lastError(sslErr, sizeof(sslErr));
       webLog("[Proxy] HTTP Code: " + String(code) + " | SSL last error: " + String(sslErr));
       if (code == 200 || code == 302) {
-        String payload = http->getString();
-        server.send(200, "application/json", payload);
+        WiFiClient *stream = http->getStreamPtr();
+        server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+        server.send(200, "application/json", "");
+        
+        uint8_t buffer[1024];
+        while (http->connected() || (stream != nullptr && stream->available())) {
+          if (stream != nullptr && stream->available()) {
+            int size = stream->available();
+            int c = stream->read(buffer, ((size > 1024) ? 1024 : size));
+            if (c > 0) {
+              server.sendContent((char*)buffer, c);
+            }
+          }
+          yield();
+        }
+        server.sendContent(""); // End of chunked response
         streamed = true;
       }
       http->end();
@@ -1911,11 +1939,16 @@ void createParentDirs(String path) {
   }
 }
 
-void printDirectory(File dir, bool& first) {
+void printDirectory(String dirPath, bool& first) {
+  File dir = myFS->open(dirPath);
+  if (!dir || !dir.isDirectory()) return;
+
   File file = dir.openNextFile();
   while (file) {
     if (file.isDirectory()) {
-      printDirectory(file, first);
+      String subPath = String(file.path());
+      file.close(); // Close subdirectory child handle before recursing
+      printDirectory(subPath, first);
     } else {
       String fname = String(file.path());
       if (!first) {
@@ -1924,10 +1957,11 @@ void printDirectory(File dir, bool& first) {
       first = false;
       String fileJson = "{\"name\":\"" + fname + "\",\"size\":" + String(file.size()) + "}";
       server.sendContent(fileJson);
+      file.close();
     }
-    file.close();
     file = dir.openNextFile();
   }
+  dir.close();
 }
 
 File uploadFile;
@@ -2859,20 +2893,14 @@ void setupWebServer() {
       server.send(200, "application/json", "[]");
       return;
     }
-    File root = myFS->open("/");
-    if (!root) {
-      server.send(200, "application/json", "[]");
-      return;
-    }
 
     server.setContentLength(CONTENT_LENGTH_UNKNOWN);
     server.send(200, "application/json", "");
     server.sendContent("[");
 
     bool first = true;
-    printDirectory(root, first);
+    printDirectory("/", first);
     
-    root.close();
     server.sendContent("]");
     server.sendContent(""); // End of chunked response
   });
@@ -4163,8 +4191,8 @@ void loop() {
       changeState(STATE_PLAY_MENU);
       mp3Play(currentAudioFolder, currentAudioTrack);
       lastAudioPlayMillis = millis();
-    } else if (validationResult == -1) {
-      // Still checking with Google Sheets, wait...
+    } else if (validationResult == -1 || (millis() - validationHoldStart < 4000)) {
+      // Still checking with Google Sheets OR we haven't played the hold audio for 4 seconds yet, wait...
       if (checkAudioFinished()) {
         webLog("Looping validation audio in language: " + String(ivrSelectedLanguage));
         if (ivrSelectedLanguage == 2) {
@@ -4176,7 +4204,7 @@ void loop() {
         }
         lastAudioPlayMillis = millis();
       }
-      if (millis() - callStartMillis > 20000) {
+      if (millis() - callStartMillis > 20000 && validationResult == -1) {
         webLog("Validation timeout during active call. Defaulting to unregistered.");
         validationResult = 0;
       }
@@ -5127,12 +5155,8 @@ void processNewIvrDtmf(char key) {
       languageDisconnectPending = false;
       dtmfTimeoutCount = 0;
       
-      // Start validation task
-      validationResult = -1; // Pending
-      ValidateTaskData *vData = new ValidateTaskData();
-      vData->phoneNumber = callerNumber;
-      validatingNumber = callerNumber;
-      xTaskCreatePinnedToCore(validateTask, "validate_task", 6144, (void *)vData, 1, NULL, 0);
+      // Record play start time for validation hold audio
+      validationHoldStart = millis();
       
       // Change state back to STATE_CALL_CONNECTED to wait for validation check
       changeState(STATE_CALL_CONNECTED);

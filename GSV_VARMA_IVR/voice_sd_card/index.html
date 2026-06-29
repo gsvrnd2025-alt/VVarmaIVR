@@ -14666,7 +14666,7 @@ async function addHelpCenterNumber() {
       
       const res = await fetch(`${scriptUrl}?${params.toString()}`);
       const resJson = await res.json();
-      if (resJson.ok) {
+      if (resJson.success || resJson.ok) {
         showToast('Help Center', `"${name}" added successfully to Sheets.`, 'success');
       } else {
         throw new Error(resJson.error || 'Server error');
@@ -14698,7 +14698,7 @@ async function deleteHelpCenterNumber(idx) {
     if (scriptUrl && h.id) {
       const res = await fetch(`${scriptUrl}?action=delete_hc_number&id=${encodeURIComponent(h.id)}`);
       const resJson = await res.json();
-      if (resJson.ok) {
+      if (resJson.success || resJson.ok) {
         showToast('Help Center', 'Number removed from Sheets.', 'warning');
       } else {
         throw new Error(resJson.error || 'Server error');
@@ -14740,7 +14740,7 @@ async function editHelpCenterNumber(idx) {
 
       const res = await fetch(`${scriptUrl}?${params.toString()}`);
       const resJson = await res.json();
-      if (resJson.ok) {
+      if (resJson.success || resJson.ok) {
         showToast('Help Center', 'Number updated in Sheets.', 'success');
       } else {
         throw new Error(resJson.error || 'Server error');

@@ -9061,9 +9061,6 @@ function validateUser(phone) {
   }
   if (!cleanPhone) return { registered: false, phone: phone };
 
-  // Sync latest registrations first (bypassed in synchronous call validation to prevent timeout)
-  // syncIvrRegisteredUsers();
-
   var ss = getSpreadsheet();
   var sheet = ss.getSheetByName("IVR_Registered_Users");
   if (sheet) {
@@ -9078,6 +9075,27 @@ function validateUser(phone) {
         return { registered: true, name: data[i][nameIdx] || '', phone: phone };
       }
     }
+  }
+
+  // If not found, run sync to see if there's a new registration, then check again
+  try {
+    syncIvrRegisteredUsers();
+    sheet = ss.getSheetByName("IVR_Registered_Users");
+    if (sheet) {
+      var data = sheet.getDataRange().getValues();
+      var headers = data[0];
+      var phoneIdx = headers.indexOf('Phone Number');
+      var nameIdx = headers.indexOf('Name');
+      
+      for (var i = 1; i < data.length; i++) {
+        var pMob = String(data[i][phoneIdx] || '').replace(/\D/g, '');
+        if (pMob.length >= 10 && pMob.slice(-10) === cleanPhone) {
+          return { registered: true, name: data[i][nameIdx] || '', phone: phone };
+        }
+      }
+    }
+  } catch(e) {
+    console.error("validateUser fallback sync failed:", e.message);
   }
 
   return { registered: false, phone: phone };
