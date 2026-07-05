@@ -1625,10 +1625,14 @@ body.light-theme .glass-input::placeholder { color: rgba(0, 0, 0, 0.4) !importan
 }
 
 .table-responsive thead th {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  background-color: #0c0804 !important; /* Match the dark theme background */
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 10 !important;
+  background: #140e05 !important; /* Solid opaque color to prevent scroll overlap */
+}
+
+body.light-theme .table-responsive thead th {
+  background: #ffffff !important;
 }
 
 .table-glass {
@@ -5105,6 +5109,20 @@ body.light-theme .nav-pills .nav-link.active {
   min-width: 2px;
 }
 
+/* Light Theme Contrast Overrides for SD Card Spec Panel */
+body.light-theme .sd-spec-grid {
+  background: rgba(0, 0, 0, 0.03) !important;
+  border-color: rgba(0, 0, 0, 0.08) !important;
+}
+body.light-theme .sd-spec-label {
+  color: rgba(0, 0, 0, 0.55) !important;
+}
+body.light-theme .sd-spec-value {
+  color: #1a202c !important;
+}
+body.light-theme .sd-usage-bar-track {
+  background: rgba(0, 0, 0, 0.08) !important;
+}
 </style>
 </head>
 <body>
@@ -5985,20 +6003,54 @@ body.light-theme .nav-pills .nav-link.active {
               <p class="text-muted small mt-1 mb-0">Live Cloud Synchronization from Google Sheets</p>
               <span id="vp-last-sync-time" class="text-muted" style="font-size:0.72rem;"></span>
             </div>
-            <div class="d-flex gap-2 align-items-center flex-wrap">
-              <span id="vp-cache-status"></span>
-              <button id="btn-varma-init" class="btn btn-glass-secondary" title="First-time: Create all required sheets and columns">
-                <i class="fa-solid fa-database me-2"></i>Init Sheets
-              </button>
-              <button id="btn-varma-reload" class="btn btn-glass-primary">
-                <i class="fa-solid fa-cloud-arrow-down me-2"></i>Reload from Cloud
-              </button>
-              <button id="btn-varma-pull" class="btn btn-glass-primary" title="Force fetch fresh data from Google Sheet (bypasses browser cache)">
-                <i class="fa-solid fa-rotate me-2"></i>Pull from Sheet
-              </button>
-              <button id="btn-varma-clear" class="btn btn-glass-secondary">
-                <i class="fa-solid fa-trash-can me-2"></i>Clear Cache
-              </button>
+
+          </div>
+
+          <!-- LOCAL DATABASE SYNC CARD -->
+          <div class="glass-card p-3 mb-4" id="local-db-sync-card">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+              <div>
+                <h5 class="mb-0" style="font-size:1rem;"><i class="fa-solid fa-hard-drive text-info me-2"></i>Local Customer Database (SD Card)</h5>
+                <small class="text-muted">Cached on SD card for instant caller validation — auto-syncs with Google Sheets</small>
+              </div>
+              <div class="d-flex gap-2 align-items-center flex-wrap">
+                <button id="btn-local-sync-now" class="btn btn-glass-primary btn-sm">
+                  <i class="fa-solid fa-arrows-rotate me-1"></i>Sync Now
+                </button>
+                <select id="select-sync-interval" class="form-select form-select-sm" style="width:auto;min-width:130px;background:rgba(255,255,255,0.08);color:#eee;border-color:rgba(255,255,255,0.15);">
+                  <option value="60000">1 Minute</option>
+                  <option value="120000">2 Minutes</option>
+                  <option value="300000" selected>5 Minutes</option>
+                  <option value="600000">10 Minutes</option>
+                  <option value="1800000">30 Minutes</option>
+                  <option value="3600000">1 Hour</option>
+                </select>
+                <button id="btn-save-sync-interval" class="btn btn-glass-secondary btn-sm">
+                  <i class="fa-solid fa-floppy-disk me-1"></i>Save
+                </button>
+              </div>
+            </div>
+            <div class="d-flex flex-wrap gap-4 mt-2">
+              <div>
+                <small class="text-muted d-block">Customers Loaded</small>
+                <span id="local-db-customer-count" class="fw-bold text-success" style="font-size:1.15rem;">0</span>
+              </div>
+              <div>
+                <small class="text-muted d-block">Last Synced</small>
+                <span id="local-db-last-sync" class="fw-bold text-info" style="font-size:0.95rem;">Never</span>
+              </div>
+              <div>
+                <small class="text-muted d-block">Next Sync In</small>
+                <span id="local-db-next-sync" class="fw-bold text-warning" style="font-size:0.95rem;">—</span>
+              </div>
+              <div>
+                <small class="text-muted d-block">Sync Errors</small>
+                <span id="local-db-sync-errors" class="fw-bold text-danger" style="font-size:0.95rem;">0</span>
+              </div>
+              <div>
+                <small class="text-muted d-block">Status</small>
+                <span id="local-db-sync-status" class="fw-bold" style="font-size:0.95rem;"><i class="fa-solid fa-circle text-secondary" style="font-size:0.5rem;vertical-align:middle;"></i> Idle</span>
+              </div>
             </div>
           </div>
 
@@ -6117,6 +6169,12 @@ body.light-theme .nav-pills .nav-link.active {
               <li class="nav-item" role="presentation">
                 <button class="nav-link" id="tab-hcnum-btn" data-bs-toggle="pill" data-bs-target="#tab-hcnum" type="button" role="tab"><i class="fa-solid fa-phone-volume me-1"></i>HC Numbers</button>
               </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link" id="tab-orders-btn" data-bs-toggle="pill" data-bs-target="#pane-orders" type="button" role="tab"><i class="fa-solid fa-cart-shopping me-1"></i>Purchases & Sales</button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link" id="tab-ledger-btn" data-bs-toggle="pill" data-bs-target="#pane-ledger" type="button" role="tab"><i class="fa-solid fa-scale-balanced me-1"></i>Ledger & Balance</button>
+              </li>
             </ul>
 
             <div class="tab-content" id="varma-tabsContent">
@@ -6152,6 +6210,12 @@ body.light-theme .nav-pills .nav-link.active {
 
               <!-- Registered Numbers Tab -->
               <div class="tab-pane fade" id="pane-registered-numbers" role="tabpanel">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                  <input type="text" id="registered-numbers-search" class="form-control glass-input btn-sm" placeholder="🔍 Search name, phone or serial..." style="max-width: 300px;">
+                  <button class="btn btn-glass-primary btn-sm" data-bs-toggle="modal" data-bs-target="#register-customer-modal">
+                    <i class="fa-solid fa-user-plus me-1"></i>Add Customer
+                  </button>
+                </div>
                 <div class="table-responsive">
                   <table class="table table-glass" id="table-registered-numbers">
                     <thead><tr><th>Name</th><th>Phone Number</th><th>Product Name</th><th>Serial Number</th><th>Warranty Status</th></tr></thead>
@@ -6222,6 +6286,26 @@ body.light-theme .nav-pills .nav-link.active {
                     <tbody id="hc-numbers-tbody">
                       <tr><td colspan="6" class="text-center text-muted py-4"><i class="fa-solid fa-spinner fa-spin me-2"></i>Loading…</td></tr>
                     </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <!-- Purchases & Sales Tab -->
+              <div class="tab-pane fade" id="pane-orders" role="tabpanel">
+                <div class="table-responsive">
+                  <table class="table table-glass" id="table-orders">
+                    <thead><tr><th>Order Date</th><th>Order ID</th><th>Customer Name</th><th>Mobile Number</th><th>Status</th><th>Total Amount</th></tr></thead>
+                    <tbody><tr><td colspan="6" class="text-center text-muted py-4">Click "Reload from Cloud" to fetch data</td></tr></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <!-- Ledger & Balance Tab -->
+              <div class="tab-pane fade" id="pane-ledger" role="tabpanel">
+                <div class="table-responsive">
+                  <table class="table table-glass" id="table-ledger">
+                    <thead><tr><th>Date</th><th>Transaction ID</th><th>Customer Name</th><th>Mobile Number</th><th>Total Amount</th><th>Paid Amount</th><th>Balance</th></tr></thead>
+                    <tbody><tr><td colspan="7" class="text-center text-muted py-4">Click "Reload from Cloud" to fetch data</td></tr></tbody>
                   </table>
                 </div>
               </div>
@@ -6605,6 +6689,10 @@ body.light-theme .nav-pills .nav-link.active {
                   <h5 class="card-section-title mb-0"><i class="fa-solid fa-terminal text-info me-2"></i>Serial Console</h5>
                   <div class="d-flex gap-3 align-items-center">
                     <div class="form-check form-switch">
+                      <input class="form-check-input bg-primary border-primary" type="checkbox" id="term-enable-monitor">
+                      <label class="form-check-label text-white small" for="term-enable-monitor">Enable Monitor</label>
+                    </div>
+                    <div class="form-check form-switch">
                       <input class="form-check-input bg-success border-success" type="checkbox" id="term-autoscroll" checked>
                       <label class="form-check-label text-white small" for="term-autoscroll">Auto-Scroll</label>
                     </div>
@@ -6857,8 +6945,32 @@ body.light-theme .nav-pills .nav-link.active {
                 <p class="text-white small" style="opacity: 0.75;">Configure firmware update repository and check for updates. Current version: <span class="badge bg-primary" id="ota-current-version">v1.1-IVR</span></p>
 
                 <div class="mb-3">
-                  <label for="ota-input-url" class="form-label text-white small fw-bold">Firmware JSON Descriptor URL</label>
+                  <label class="form-label text-white small fw-bold">Firmware Update Source</label>
+                  <div class="d-flex gap-3 align-items-center mt-1 flex-wrap">
+                    <div class="form-check">
+                      <input class="form-check-input" type="radio" name="ota-source" id="ota-source-github" value="github" checked>
+                      <label class="form-check-label text-white small" for="ota-source-github"><i class="fa-brands fa-github me-1"></i>GitHub</label>
+                    </div>
+                    <div class="form-check">
+                      <input class="form-check-input" type="radio" name="ota-source" id="ota-source-sheets" value="google_sheets">
+                      <label class="form-check-label text-white small" for="ota-source-sheets"><i class="fa-solid fa-table me-1"></i>Google Sheets</label>
+                    </div>
+                    <div class="form-check">
+                      <input class="form-check-input" type="radio" name="ota-source" id="ota-source-gdrive" value="google_drive">
+                      <label class="form-check-label text-white small" for="ota-source-gdrive"><i class="fa-brands fa-google-drive me-1"></i>Google Drive</label>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="mb-3" id="ota-url-group">
+                  <label for="ota-input-url" class="form-label text-white small fw-bold" id="ota-url-label">Firmware JSON Descriptor URL</label>
                   <input type="text" id="ota-input-url" class="form-control glass-input" value="https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/version.json" placeholder="e.g. https://raw.githubusercontent.com/.../version.json">
+                  <div id="ota-gdrive-help" class="text-white-50 small mt-1 d-none">
+                    <i class="fa-brands fa-google-drive me-1 text-warning"></i>
+                    Paste the <strong>direct Google Drive link</strong> to your <code>version.json</code> file.<br>
+                    In Drive: right-click file → <em>Get link</em> → set to <em>Anyone with link</em> → copy.<br>
+                    Format: <code>https://drive.google.com/uc?export=download&amp;id=FILE_ID</code>
+                  </div>
                 </div>
 
                 <div class="form-check form-switch form-switch-p mb-3">
@@ -6877,11 +6989,17 @@ body.light-theme .nav-pills .nav-link.active {
                 </div>
 
                 <div class="btn-action-group mt-auto d-flex gap-2 flex-wrap">
+                  <button class="btn btn-glass-primary flex-grow-1" id="btn-save-ota-config">
+                    <i class="fa-solid fa-floppy-disk me-2"></i>Save Settings
+                  </button>
                   <button class="btn btn-glass-info flex-grow-1" id="btn-check-update">
                     <i class="fa-solid fa-sync me-2"></i>Check Updates
                   </button>
                   <button class="btn btn-glass-secondary flex-grow-1" id="btn-test-ota-connection">
                     <i class="fa-solid fa-plug-circle-check me-2"></i>Test Connection
+                  </button>
+                  <button class="btn btn-glass-danger w-100 d-flex align-items-center justify-content-center mt-2" id="btn-reboot-device">
+                    <i class="fa-solid fa-power-off me-2"></i>Reboot Device
                   </button>
                   <button class="btn btn-glass-success flex-grow-1 d-none" id="btn-start-update">
                     <i class="fa-solid fa-download me-2"></i>Install Update
@@ -7000,7 +7118,7 @@ body.light-theme .nav-pills .nav-link.active {
             <i class="fa-solid fa-circle-info me-2"></i><span id="sd-test-msg">Running diagnostics...</span>
           </div>
           
-          <div class="row g-4 mb-4">
+          <div class="row g-4 mb-4" id="sd-status-cards-row">
             <div class="col-md-6 col-lg-4">
               <div class="glass-card text-center h-100">
                 <div class="mb-2"><i class="fa-solid fa-sd-card text-primary fa-2x"></i></div>
@@ -7722,6 +7840,146 @@ body.light-theme .nav-pills .nav-link.active {
     </div>
   </div>
 
+  <!-- ============================================================
+       REGISTER CUSTOMER MODAL
+  ============================================================ -->
+  <div class="modal fade" id="register-customer-modal" tabindex="-1" aria-labelledby="registerCustomerModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content glass-modal">
+        <div class="modal-header border-0 pb-0">
+          <h5 class="modal-title text-white" id="registerCustomerModalLabel">
+            <i class="fa-solid fa-user-plus text-warning me-2"></i>Register New Customer
+          </h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form id="form-register-customer">
+            <div class="mb-3">
+              <label for="rc-phone" class="form-label text-muted small">Phone Number / Mobile</label>
+              <input type="tel" class="form-control glass-input" id="rc-phone" placeholder="+919876543210" required>
+            </div>
+            <div class="mb-3">
+              <label for="rc-name" class="form-label text-muted small">Full Name</label>
+              <input type="text" class="form-control glass-input" id="rc-name" placeholder="John Doe" required>
+            </div>
+            <div class="mb-3">
+              <label for="rc-product" class="form-label text-muted small">Product Model</label>
+              <input type="text" class="form-control glass-input" id="rc-product" placeholder="VARMA 1HP">
+            </div>
+            <div class="mb-3">
+              <label for="rc-serial" class="form-label text-muted small">Serial Number / Details</label>
+              <input type="text" class="form-control glass-input" id="rc-serial" placeholder="VM-90827">
+            </div>
+            <div class="text-end mt-4">
+              <button type="button" class="btn btn-glass-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+              <button type="submit" class="btn btn-glass-primary" id="btn-submit-customer">Register</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       CUSTOMER DETAILS / DATABASE PROFILE MODAL
+  ============================================================ -->
+  <div class="modal fade" id="customer-profile-modal" tabindex="-1" aria-labelledby="customerProfileModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
+      <div class="modal-content glass-modal">
+        <div class="modal-header border-0 pb-0">
+          <h5 class="modal-title text-white" id="customerProfileModalLabel">
+            <i class="fa-solid fa-address-card text-success me-2"></i>Customer Database Profile
+          </h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row g-3">
+            <!-- Left Column: User details & stats -->
+            <div class="col-lg-4">
+              <div class="glass-card h-100 p-3">
+                <div class="text-center mb-4">
+                  <div class="avatar bg-success-subtle text-success rounded-circle d-inline-flex align-items-center justify-content-center mb-3" style="width: 80px; height: 80px; font-size: 2.5rem;">
+                    <i class="fa-solid fa-user"></i>
+                  </div>
+                  <h4 class="text-white mb-0" id="prof-name">—</h4>
+                  <span class="badge bg-success-subtle text-success mt-2" id="prof-status">Active</span>
+                </div>
+                <hr class="border-secondary">
+                <div class="small">
+                  <div class="d-flex justify-content-between mb-2">
+                    <span class="text-muted">Phone:</span>
+                    <strong class="text-white" id="prof-phone">—</strong>
+                  </div>
+                  <div class="d-flex justify-content-between mb-2">
+                    <span class="text-muted">Product:</span>
+                    <strong class="text-white" id="prof-product">—</strong>
+                  </div>
+                  <div class="d-flex justify-content-between mb-2">
+                    <span class="text-muted">Serial No:</span>
+                    <strong class="text-white" id="prof-serial">—</strong>
+                  </div>
+                  <div class="d-flex justify-content-between">
+                    <span class="text-muted">Balance:</span>
+                    <strong class="text-warning" id="prof-balance">—</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- Right Column: Tabbed Lists (Purchases, Ledger, Complaints) -->
+            <div class="col-lg-8">
+              <div class="glass-card h-100 p-3">
+                <ul class="nav nav-tabs border-secondary mb-3" id="profileTabs" role="tablist">
+                  <li class="nav-item">
+                    <button class="nav-link active text-white" id="prof-purchases-tab" data-bs-toggle="tab" data-bs-target="#prof-purchases" type="button" role="tab">Purchases & Sales</button>
+                  </li>
+                  <li class="nav-item">
+                    <button class="nav-link text-white" id="prof-ledger-tab" data-bs-toggle="tab" data-bs-target="#prof-ledger" type="button" role="tab">Ledger Statement</button>
+                  </li>
+                  <li class="nav-item">
+                    <button class="nav-link text-white" id="prof-complaints-tab" data-bs-toggle="tab" data-bs-target="#prof-complaints" type="button" role="tab">Complaint History</button>
+                  </li>
+                </ul>
+                <div class="tab-content" id="profileTabsContent">
+                  <div class="tab-pane fade show active" id="prof-purchases" role="tabpanel">
+                    <div class="table-responsive" style="max-height: 250px;">
+                      <table class="table table-dark table-hover align-middle mb-0" id="prof-table-purchases">
+                        <thead>
+                          <tr><th>Date</th><th>Order ID</th><th>Status</th><th>Amount</th></tr>
+                        </thead>
+                        <tbody><tr><td colspan="4" class="text-center text-muted">No purchases found</td></tr></tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <div class="tab-pane fade" id="prof-ledger" role="tabpanel">
+                    <div class="table-responsive" style="max-height: 250px;">
+                      <table class="table table-dark table-hover align-middle mb-0" id="prof-table-ledger">
+                        <thead>
+                          <tr><th>Date</th><th>Tx ID</th><th>Total</th><th>Paid</th><th>Balance</th></tr>
+                        </thead>
+                        <tbody><tr><td colspan="5" class="text-center text-muted">No transactions found</td></tr></tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <div class="tab-pane fade" id="prof-complaints" role="tabpanel">
+                    <div class="table-responsive" style="max-height: 250px;">
+                      <table class="table table-dark table-hover align-middle mb-0" id="prof-table-complaints">
+                        <thead>
+                          <tr><th>ID</th><th>Date</th><th>Description</th><th>Status</th></tr>
+                        </thead>
+                        <tbody><tr><td colspan="4" class="text-center text-muted">No complaints filed</td></tr></tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
   <!-- Bootstrap 5 Bundle JS -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
   <!-- Chart.js -->
@@ -7753,7 +8011,7 @@ body.light-theme .nav-pills .nav-link.active {
 // ============================================================
 // GLOBAL STATE
 // ============================================================
-const isRealESP32 = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' && window.location.protocol !== 'file:';
+const isRealESP32 = true;
 
 // Global helper for CORS-bypass direct fetch from Google Sheets
 const fetchJsonp = (url, timeoutMs = 15000) => {
@@ -8051,7 +8309,7 @@ const esp32State = {
 const BACKEND_URL = isRealESP32 ? window.location.origin : 'http://localhost:3000';
 const API_KEY = 'esp32_ivr_dev_key_change_in_production';
 
-let useMockApi = !isRealESP32;
+let useMockApi = false;
 
 
 async function espFetch(url, method = 'GET', data = null) {
@@ -10229,23 +10487,77 @@ function initOtaHandlers() {
   }
 
   // 1. Fetch saved URL & Auto Update config on load
+  let originalGithubUrl = 'https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/version.json';
+  const _GDRIVE_HELP_MSG = '';
+  const applyOtaSourceUI = (source, urlInput) => {
+    const radioGithub = document.getElementById('ota-source-github');
+    const radioSheets = document.getElementById('ota-source-sheets');
+    const radioGdrive = document.getElementById('ota-source-gdrive');
+    const urlLabel    = document.getElementById('ota-url-label');
+    const gdriveHelp  = document.getElementById('ota-gdrive-help');
+    if (source === 'google_sheets') {
+      if (radioSheets) radioSheets.checked = true;
+      if (urlInput) {
+        urlInput.disabled = true;
+        urlInput.value = (esp32State.googleSheets?.scriptUrl || '') + '?action=getOtaVersion&sheetId=' + (esp32State.googleSheets?.sheetId || '');
+        urlInput.placeholder = 'Auto-configured from Google Sheets';
+      }
+      if (urlLabel) urlLabel.textContent = 'Google Sheets Endpoint (auto)';
+      if (gdriveHelp) gdriveHelp.classList.add('d-none');
+    } else if (source === 'google_drive') {
+      if (radioGdrive) radioGdrive.checked = true;
+      if (urlInput) {
+        urlInput.disabled = false;
+        urlInput.placeholder = 'https://drive.google.com/uc?export=download&id=FILE_ID';
+        // Only reset to empty if currently showing a sheets/github URL
+        if (!urlInput.value || urlInput.value.includes('script.google.com') || urlInput.value.includes('raw.githubusercontent.com')) {
+          urlInput.value = '';
+        }
+      }
+      if (urlLabel) urlLabel.textContent = 'Google Drive Direct Link (version.json)';
+      if (gdriveHelp) gdriveHelp.classList.remove('d-none');
+    } else {
+      // github (default)
+      if (radioGithub) radioGithub.checked = true;
+      if (urlInput) {
+        urlInput.disabled = false;
+        urlInput.placeholder = 'e.g. https://raw.githubusercontent.com/.../version.json';
+        if (originalGithubUrl && !originalGithubUrl.includes('script.google.com')) {
+          urlInput.value = originalGithubUrl;
+        } else {
+          urlInput.value = 'https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/version.json';
+        }
+      }
+      if (urlLabel) urlLabel.textContent = 'Firmware JSON Descriptor URL';
+      if (gdriveHelp) gdriveHelp.classList.add('d-none');
+    }
+  };
+
   const loadSavedOtaUrl = async () => {
     try {
       const res = await fetch('/ota_status');
       if (res.ok) {
         const data = await res.json();
         const urlInput = document.getElementById('ota-input-url');
-        if (urlInput) {
+        const source   = data.source || 'github';
+
+        if (source === 'google_sheets') {
+          applyOtaSourceUI('google_sheets', urlInput);
+          if (data.descriptorUrl) originalGithubUrl = data.descriptorUrl;
+        } else if (source === 'google_drive') {
+          applyOtaSourceUI('google_drive', urlInput);
+          if (urlInput && data.descriptorUrl) urlInput.value = data.descriptorUrl;
+        } else {
           if (data.descriptorUrl) {
-            urlInput.value = data.descriptorUrl;
+            originalGithubUrl = data.descriptorUrl;
           } else if (data.url) {
-            urlInput.value = data.url;
+            originalGithubUrl = data.url;
           }
+          applyOtaSourceUI('github', urlInput);
         }
+        
         const autoSwitch = document.getElementById('switch-ota-auto-update');
-        if (autoSwitch) {
-          autoSwitch.checked = !!data.autoUpdate;
-        }
+        if (autoSwitch) autoSwitch.checked = !!data.autoUpdate;
         if (data.inProgress) {
           showToast('OTA Progress', 'An update check/installation is currently in progress...', 'info');
           startPollingOta('25%');
@@ -10256,6 +10568,24 @@ function initOtaHandlers() {
     }
   };
   loadSavedOtaUrl();
+
+  const radioGithub = document.getElementById('ota-source-github');
+  const radioSheets = document.getElementById('ota-source-sheets');
+  const radioGdrive = document.getElementById('ota-source-gdrive');
+  const handleSourceChange = () => {
+    const urlInput = document.getElementById('ota-input-url');
+    const src = document.querySelector('input[name="ota-source"]:checked')?.value || 'github';
+    // Save current github URL before switching away
+    if (src !== 'google_sheets' && src !== 'google_drive') {
+      if (urlInput && urlInput.value && !urlInput.value.includes('script.google.com')) {
+        originalGithubUrl = urlInput.value.trim();
+      }
+    }
+    applyOtaSourceUI(src, urlInput);
+  };
+  if (radioGithub) radioGithub.addEventListener('change', handleSourceChange);
+  if (radioSheets) radioSheets.addEventListener('change', handleSourceChange);
+  if (radioGdrive) radioGdrive.addEventListener('change', handleSourceChange);
 
   // 2. Auto Update switch toggler
   const autoSwitch = document.getElementById('switch-ota-auto-update');
@@ -10308,13 +10638,18 @@ function initOtaHandlers() {
     }
 
     try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('HTTP ' + res.status);
+      // Use ESP32 server-side proxy to bypass browser CORS restrictions
+      const proxyUrl = `/api/ota_check_version?url=${encodeURIComponent(url)}`;
+      const res = await fetch(proxyUrl);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'HTTP ' + res.status);
+      }
       const data = await res.json();
       
       if (data && data.version && data.url) {
         statusLabel.innerHTML = '<span class="text-success fw-bold"><i class="fa-solid fa-circle-check"></i> Connection Successful! Descriptor is valid.</span>';
-        showToast('Connection Success', 'GitHub repository is reachable and descriptor is valid.', 'success');
+        showToast('Connection Success', 'Repository is reachable and descriptor is valid.', 'success');
       } else {
         throw new Error('Descriptor missing version/url fields');
       }
@@ -10360,19 +10695,25 @@ function initOtaHandlers() {
     }
 
     try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('HTTP ' + res.status);
+      // Use ESP32 server-side proxy to bypass browser CORS restrictions
+      const proxyUrl = `/api/ota_check_version?url=${encodeURIComponent(url)}`;
+      const res = await fetch(proxyUrl);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'HTTP ' + res.status);
+      }
       updateInfo = await res.json();
 
       if (updateInfo && updateInfo.version) {
         const newVersion = updateInfo.version;
-        if (newVersion !== currentVersion) {
-          statusLabel.innerHTML = `<span class="text-success">New version ${newVersion} is available!</span>`;
+        const deviceVersion = updateInfo.currentVersion || currentVersion;
+        if (newVersion !== deviceVersion) {
+          statusLabel.innerHTML = `<span class="text-success">New version ${newVersion} is available! (Current: ${deviceVersion})</span>`;
           if (startBtn) startBtn.classList.remove('d-none');
           showToast('Software Update', `New firmware version ${newVersion} is available!`, 'success');
           addNotification('Software Update', `Firmware version ${newVersion} is available for installation.`, 'warning');
         } else {
-          statusLabel.innerHTML = `<span class="text-info">Firmware is up-to-date (v1.1-IVR)</span>`;
+          statusLabel.innerHTML = `<span class="text-info">Firmware is up-to-date (${deviceVersion})</span>`;
           showToast('Software Update', 'Your firmware is already up-to-date.', 'info');
         }
       } else {
@@ -10459,6 +10800,64 @@ function initOtaHandlers() {
       if (urlInput) urlInput.disabled = false;
       if (autoSwitch) autoSwitch.disabled = false;
       showToast('OTA Failed', err.message, 'danger');
+    }
+  });
+
+  // 6. Save Settings explicitly
+  bindClick('btn-save-ota-config', async () => {
+    const urlInput = document.getElementById('ota-input-url');
+    if (!urlInput) return;
+    const url = urlInput.value.trim();
+    if (!url) {
+      alert('Please enter a valid version JSON descriptor URL.');
+      return;
+    }
+    const btn = document.getElementById('btn-save-ota-config');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-2"></i>Saving...';
+    try {
+      const sourceSelected = document.querySelector('input[name="ota-source"]:checked')?.value || 'github';
+      const saveParams = new URLSearchParams();
+      saveParams.append('url', sourceSelected === 'google_sheets' ? originalGithubUrl : url);
+      saveParams.append('source', sourceSelected);
+      const res = await fetch('/api/ota_save_descriptor', { method: 'POST', body: saveParams });
+      if (res.ok) {
+        showToast('OTA Config', 'Descriptor URL saved successfully to NVS.', 'success');
+      } else {
+        throw new Error('Save HTTP ' + res.status);
+      }
+    } catch (err) {
+      console.error('OTA Config save error:', err);
+      showToast('OTA Save Error', 'Failed to save descriptor URL.', 'danger');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-floppy-disk me-2"></i>Save Settings';
+    }
+  });
+
+  // 7. Reboot device explicitly
+  bindClick('btn-reboot-device', async () => {
+    if (!confirm('Are you sure you want to reboot the ESP32 module? Connection will be temporarily lost.')) {
+      return;
+    }
+    const btn = document.getElementById('btn-reboot-device');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-2"></i>Rebooting...';
+    try {
+      const res = await fetch('/api/reboot', { method: 'POST' });
+      if (res.ok) {
+        showToast('System Control', 'Reboot command sent. Reconnecting in 10 seconds...', 'success');
+        setTimeout(() => {
+          window.location.reload();
+        }, 10000);
+      } else {
+        throw new Error('Reboot HTTP ' + res.status);
+      }
+    } catch (err) {
+      console.error('System Reboot error:', err);
+      showToast('Reboot Failed', 'Failed to send reboot command.', 'danger');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-power-off me-2"></i>Reboot';
     }
   });
 }
@@ -10694,9 +11093,9 @@ function exportToPdf() {
 // ============================================================
 function buildAnalyticsSummary() {
   const total     = callsData.length;
-  const completed = callsData.filter(c => c.status === 'Completed').length;
+  const completed = callsData.filter(c => c.status === 'Completed' || c.status === 'Answered').length;
   const missed    = total - completed;
-  const sumDur    = callsData.reduce((s, c) => s + c.duration, 0);
+  const sumDur    = callsData.reduce((s, c) => s + (c.duration || 0), 0);
   const avgSecs   = completed > 0 ? Math.round(sumDur / completed) : 0;
 
   return {
@@ -10724,55 +11123,86 @@ function updateAnalyticsCharts() {
   
   if (typeof Chart === 'undefined') return;
 
-  // 1. Daily Calls
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10); // YYYY-MM-DD
+
+  // 1. Daily Calls — today only, grouped by hour buckets
   if (chartDaily && chartDaily.data && chartDaily.data.datasets[0]) {
     const dailyData = [0, 0, 0, 0, 0, 0, 0]; // ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00']
     callsData.forEach(c => {
+      // Only count calls from today
+      const callDate = c.date && c.date !== 'Local Session' ? c.date : todayStr;
+      if (callDate !== todayStr) return;
       if (!c.time) return;
       const hour = parseInt(c.time.split(':')[0]) || 0;
-      if (hour < 9) dailyData[0]++;
+      if (hour < 9)       dailyData[0]++;
       else if (hour < 11) dailyData[1]++;
       else if (hour < 13) dailyData[2]++;
       else if (hour < 15) dailyData[3]++;
       else if (hour < 17) dailyData[4]++;
       else if (hour < 19) dailyData[5]++;
-      else dailyData[6]++;
+      else                dailyData[6]++;
     });
     chartDaily.data.datasets[0].data = dailyData;
     chartDaily.update();
   }
 
-  // 2. Weekly Calls
+  // 2. Weekly Calls — current week only (Mon–Sun)
   if (chartWeekly && chartWeekly.data && chartWeekly.data.datasets[0]) {
-    const weeklyData = [0, 0, 0, 0, 0, 0, 0]; // ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    const weeklyData = [0, 0, 0, 0, 0, 0, 0]; // Mon=0...Sun=6
+    // Compute start of the current week (Monday)
+    const todayDay = now.getDay(); // 0=Sun
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() - (todayDay === 0 ? 6 : todayDay - 1));
+    weekStart.setHours(0, 0, 0, 0);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 7);
+
     callsData.forEach(c => {
-      let dObj = new Date();
+      let dObj;
       if (c.date && c.date !== 'Local Session') {
         dObj = new Date(c.date);
+        if (isNaN(dObj.getTime())) dObj = null;
       }
-      let day = dObj.getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
-      let idx = day === 0 ? 6 : day - 1; // Map to Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
-      if (idx >= 0 && idx < 7) {
-        weeklyData[idx]++;
-      }
+      if (!dObj || dObj < weekStart || dObj >= weekEnd) return; // skip if no real date or outside this week
+      let day = dObj.getDay();
+      let idx = day === 0 ? 6 : day - 1; // Mon=0...Sun=6
+      weeklyData[idx]++;
     });
     chartWeekly.data.datasets[0].data = weeklyData;
     chartWeekly.update();
   }
 
-  // 3. Monthly Calls
+  // 3. Monthly Calls — rolling 6-month window ending in current month
   if (chartMonthly && chartMonthly.data && chartMonthly.data.datasets[0]) {
-    const monthlyData = [0, 0, 0, 0, 0, 0]; // ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun']
+    const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const curYear  = now.getFullYear();
+    const curMonth = now.getMonth(); // 0-based
+    // Build a 6-month window ending this month
+    const windowMonths = []; // Each: {year, month}
+    for (let i = 5; i >= 0; i--) {
+      let m = curMonth - i;
+      let y = curYear;
+      if (m < 0) { m += 12; y -= 1; }
+      windowMonths.push({ year: y, month: m });
+    }
+    const labels    = windowMonths.map(w => MONTH_NAMES[w.month]);
+    const monthlyData = new Array(6).fill(0);
+
     callsData.forEach(c => {
-      let dObj = new Date();
+      let dObj;
       if (c.date && c.date !== 'Local Session') {
         dObj = new Date(c.date);
+        if (isNaN(dObj.getTime())) dObj = null;
       }
-      let month = dObj.getMonth(); // 0 = Jan, 1 = Feb, etc.
-      if (month >= 0 && month < 6) {
-        monthlyData[month]++;
-      }
+      if (!dObj) return; // skip entries with no real date
+      const y = dObj.getFullYear();
+      const m = dObj.getMonth();
+      const idx = windowMonths.findIndex(w => w.year === y && w.month === m);
+      if (idx !== -1) monthlyData[idx]++;
     });
+
+    chartMonthly.data.labels = labels;
     chartMonthly.data.datasets[0].data = monthlyData;
     chartMonthly.update();
   }
@@ -10840,13 +11270,21 @@ function initCharts() {
     });
   }
 
-  // Monthly Calls — Area Chart
+  // Monthly Calls — Area Chart (rolling 6-month window ending this month)
   const ctxMonthly = document.getElementById('chart-monthly');
   if (ctxMonthly) {
+    const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const today = new Date();
+    const initLabels = [];
+    for (let i = 5; i >= 0; i--) {
+      let m = today.getMonth() - i;
+      if (m < 0) m += 12;
+      initLabels.push(MONTH_NAMES[m]);
+    }
     chartMonthly = new Chart(ctxMonthly, {
       type: 'line',
       data: {
-        labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+        labels: initLabels,
         datasets: [{
           label: 'Calls',
           data:  [0, 0, 0, 0, 0, 0],
@@ -12358,7 +12796,7 @@ async function loadRealESP32Data() {
 
     let shouldFetchCalls = false;
     const nowTime = Date.now();
-    if (currentSection === 'call-history' || currentSection === 'dashboard') {
+    if (currentSection === 'call-history' || currentSection === 'dashboard' || currentSection === 'analytics') {
       if (nowTime - lastGetCallsTime > 15000) {
         shouldFetchCalls = true;
       }
@@ -13122,8 +13560,20 @@ function initSerialTerminal() {
     });
   }
 
+  const enableMonitor = document.getElementById('term-enable-monitor');
+  if (enableMonitor) {
+    enableMonitor.addEventListener('change', () => {
+      if (enableMonitor.checked) {
+        window.startSerialPolling();
+      } else {
+        window.stopSerialPolling();
+      }
+    });
+  }
+
   window.startSerialPolling = function() {
-    if (isRealESP32 && !serialInterval) {
+    const enableMon = document.getElementById('term-enable-monitor');
+    if (isRealESP32 && !serialInterval && enableMon && enableMon.checked) {
       serialInterval = setInterval(pollSerial, 1500);
       console.log('[Serial] Polling started');
     }
@@ -13216,17 +13666,21 @@ async function loadSDManagerData() {
       if (sdTotalEl) sdTotalEl.textContent = '—';
     }
 
-    // ── Card Spec Panel ────────────────────────────────────────────────────────
-    // Inject a spec info row beneath the status cards if it doesn't already exist
+    // Inject a spec info row beneath the status cards row if it doesn't already exist
     let specPanel = document.getElementById('sd-spec-panel');
     if (!specPanel) {
       specPanel = document.createElement('div');
       specPanel.id = 'sd-spec-panel';
       specPanel.className = 'sd-spec-panel mt-3 mb-2';
-      // Insert before the DFPlayer section or first card section in #sd-manager
-      const sdManager = document.getElementById('sd-manager');
-      const firstCard = sdManager ? sdManager.querySelector('.card, .glass-card, .section-card') : null;
-      if (firstCard) firstCard.parentNode.insertBefore(specPanel, firstCard.nextSibling);
+      // Insert after the status cards row container in #sd-manager
+      const cardsRow = document.getElementById('sd-status-cards-row');
+      if (cardsRow) {
+        cardsRow.parentNode.insertBefore(specPanel, cardsRow.nextSibling);
+      } else {
+        const sdManager = document.getElementById('sd-manager');
+        const firstCard = sdManager ? sdManager.querySelector('.card, .glass-card, .section-card') : null;
+        if (firstCard) firstCard.parentNode.insertBefore(specPanel, firstCard.nextSibling);
+      }
     }
 
     const unsupportedEl = document.getElementById('sd-unsupported-alert');
@@ -13279,32 +13733,39 @@ async function loadSDManagerData() {
     }
 
     // ── File List ────────────────────────────────────────────────────────────
-    const files = isRealESP32 ? await (await fetch('/sd_files')).json() : await simulateApiCall('/sd_files');
     const tbody = document.getElementById('sd-files-table');
-    if (!files || files.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No files found on TF card.</td></tr>';
-    } else {
-      tbody.innerHTML = '';
-      files.forEach(f => {
-        const isAudio = f.name.endsWith('.amr') || f.name.endsWith('.wav') || f.name.endsWith('.mp3');
-        const icon = isAudio ? 'fa-file-audio text-info' : 'fa-file-lines text-warning';
-        const playBtnHtml = isAudio 
-          ? `<button class="btn btn-sm btn-glass-success me-1" onclick="playSDFile('${f.name}')" title="Play/Test Audio File"><i class="fa-solid fa-play"></i></button>` 
-          : '';
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td><i class="fa-solid ${icon} me-2"></i> ${f.name}</td>
-          <td>${(f.size / 1024).toFixed(1)} KB</td>
-          <td class="text-end">
-            ${playBtnHtml}
-            <button class="btn btn-sm btn-glass-info me-1" onclick="previewFile('${f.name}')" title="Preview File"><i class="fa-solid fa-eye"></i></button>
-            <a href="/download_file?file=${encodeURIComponent(f.name)}" class="btn btn-sm btn-glass-primary me-1" title="Download File"><i class="fa-solid fa-cloud-arrow-down"></i></a>
-            <button class="btn btn-sm btn-glass-warning me-1" onclick="renameFile('${f.name}')" title="Rename File"><i class="fa-solid fa-pen-to-square"></i></button>
-            <button class="btn btn-sm btn-glass-danger" onclick="deleteAudio('${f.name}')" title="Delete File"><i class="fa-solid fa-trash"></i></button>
-          </td>
-        `;
-        tbody.appendChild(tr);
-      });
+    if (tbody) {
+      try {
+        const files = isRealESP32 ? await (await fetch('/sd_files')).json() : await simulateApiCall('/sd_files');
+        if (!files || files.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No files found on TF card.</td></tr>';
+        } else {
+          tbody.innerHTML = '';
+          files.forEach(f => {
+            const isAudio = f.name.endsWith('.amr') || f.name.endsWith('.wav') || f.name.endsWith('.mp3');
+            const icon = isAudio ? 'fa-file-audio text-info' : 'fa-file-lines text-warning';
+            const playBtnHtml = isAudio 
+              ? `<button class="btn btn-sm btn-glass-success me-1" onclick="playSDFile('${f.name}')" title="Play/Test Audio File"><i class="fa-solid fa-play"></i></button>` 
+              : '';
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td><i class="fa-solid ${icon} me-2"></i> ${f.name}</td>
+              <td>${(f.size / 1024).toFixed(1)} KB</td>
+              <td class="text-end">
+                ${playBtnHtml}
+                <button class="btn btn-sm btn-glass-info me-1" onclick="previewFile('${f.name}')" title="Preview File"><i class="fa-solid fa-eye"></i></button>
+                <a href="/download_file?file=${encodeURIComponent(f.name)}" class="btn btn-sm btn-glass-primary me-1" title="Download File"><i class="fa-solid fa-cloud-arrow-down"></i></a>
+                <button class="btn btn-sm btn-glass-warning me-1" onclick="renameFile('${f.name}')" title="Rename File"><i class="fa-solid fa-pen-to-square"></i></button>
+                <button class="btn btn-sm btn-glass-danger" onclick="deleteAudio('${f.name}')" title="Delete File"><i class="fa-solid fa-trash"></i></button>
+              </td>
+            `;
+            tbody.appendChild(tr);
+          });
+        }
+      } catch (err) {
+        console.error('Failed to load files list from SD:', err);
+        tbody.innerHTML = `<tr><td colspan="3" class="text-center text-danger"><i class="fa-solid fa-circle-exclamation me-1"></i>Failed to load files list: ${err.message}</td></tr>`;
+      }
     }
 
     // ── I2S Audio Diagnosis Info ────────────────────────────────────────────────
@@ -13976,16 +14437,66 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnInit   = document.getElementById('btn-varma-init');
   const btnPull   = document.getElementById('btn-varma-pull'); // NEW: force-pull button
 
-  // Reload from cache (or fetch if no cache)
-  if (btnReload) btnReload.addEventListener('click', () => fetchVarmaData());
+  // Helper to trigger background sync, poll status, and reload when complete
+  async function triggerBackgroundSyncAndReload(btn, customMsg) {
+    btn.disabled = true;
+    const oldHtml = btn.innerHTML;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-2"></i>Syncing...';
+    try {
+      showToast('VARMA Panel', customMsg, 'info');
+      const res = await fetch('/api/sync_now', { method: 'POST' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      
+      let attempts = 0;
+      const interval = setInterval(async () => {
+        attempts++;
+        try {
+          const statusRes = await fetch('/api/sync_status');
+          if (statusRes.ok) {
+            const sd = await statusRes.json();
+            // Update the local DB sync UI card stats if visible
+            if (typeof updateLocalDbSyncUI === 'function') {
+              updateLocalDbSyncUI(sd);
+            }
+            if (!sd.syncRunning || attempts > 20) {
+              clearInterval(interval);
+              // Clear cache and fetch fresh data from SD card
+              localStorage.removeItem('vvarma_sheets_cache');
+              updateVarmaCacheStatus();
+              await fetchVarmaData();
+              btn.disabled = false;
+              btn.innerHTML = oldHtml;
+            }
+          }
+        } catch (e) {
+          clearInterval(interval);
+          btn.disabled = false;
+          btn.innerHTML = oldHtml;
+        }
+      }, 2000);
+    } catch (err) {
+      showToast('VARMA Panel', '❌ Failed to start sync: ' + err.message, 'danger');
+      btn.disabled = false;
+      btn.innerHTML = oldHtml;
+    }
+  }
 
-  // NEW: "Pull from Sheet" — bypasses cache and always fetches fresh live data
+  // Reload from cache (or fetch if no cache)
+  if (btnReload) {
+    btnReload.addEventListener('click', () => {
+      const hasCache = localStorage.getItem('vvarma_sheets_cache') !== null;
+      if (hasCache) {
+        fetchVarmaData();
+      } else {
+        triggerBackgroundSyncAndReload(btnReload, '🔄 Fetching fresh Varma data from Cloud...');
+      }
+    });
+  }
+
+  // NEW: "Pull from Sheet" — bypasses cache and always triggers background sync + reload
   if (btnPull) {
     btnPull.addEventListener('click', () => {
-      localStorage.removeItem('vvarma_sheets_cache');
-      updateVarmaCacheStatus();
-      fetchVarmaData();
-      showToast('VARMA Panel', '🔄 Pulling fresh data from Google Sheet…', 'info');
+      triggerBackgroundSyncAndReload(btnPull, '🔄 Pulling fresh data from Google Sheet in background...');
     });
   }
 
@@ -14062,6 +14573,115 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // ==================== LOCAL DB SYNC CARD HANDLERS ====================
+  // Sync Now button
+  const btnSyncNow = document.getElementById('btn-local-sync-now');
+  if (btnSyncNow) {
+    btnSyncNow.addEventListener('click', async () => {
+      btnSyncNow.disabled = true;
+      btnSyncNow.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i>Syncing...';
+      const statusEl = document.getElementById('local-db-sync-status');
+      if (statusEl) statusEl.innerHTML = '<i class="fa-solid fa-circle text-warning" style="font-size:0.5rem;vertical-align:middle;"></i> Syncing...';
+      try {
+        const res = await fetch('/api/sync_now', { method: 'POST' });
+        if (res.ok) {
+          showToast('Local DB', '✅ Manual sync triggered. Refreshing in 5s…', 'success');
+          // Poll for completion
+          setTimeout(async () => {
+            try {
+              const sr = await fetch('/api/sync_status');
+              if (sr.ok) {
+                const sd = await sr.json();
+                updateLocalDbSyncUI(sd);
+              }
+            } catch (e) {}
+            btnSyncNow.disabled = false;
+            btnSyncNow.innerHTML = '<i class="fa-solid fa-arrows-rotate me-1"></i>Sync Now';
+          }, 5000);
+        } else {
+          throw new Error('HTTP ' + res.status);
+        }
+      } catch (err) {
+        showToast('Local DB', '❌ Sync failed: ' + err.message, 'danger');
+        btnSyncNow.disabled = false;
+        btnSyncNow.innerHTML = '<i class="fa-solid fa-arrows-rotate me-1"></i>Sync Now';
+      }
+    });
+  }
+
+  // Save sync interval
+  const btnSaveInterval = document.getElementById('btn-save-sync-interval');
+  if (btnSaveInterval) {
+    btnSaveInterval.addEventListener('click', async () => {
+      const selectEl = document.getElementById('select-sync-interval');
+      if (!selectEl) return;
+      const interval = selectEl.value;
+      try {
+        const params = new URLSearchParams();
+        params.append('interval', interval);
+        const res = await fetch('/api/sync_interval', { method: 'POST', body: params });
+        if (res.ok) {
+          const mins = parseInt(interval) / 60000;
+          showToast('Local DB', `✅ Sync interval updated to ${mins} minute(s)`, 'success');
+        } else {
+          throw new Error('HTTP ' + res.status);
+        }
+      } catch (err) {
+        showToast('Local DB', '❌ Failed to save interval: ' + err.message, 'danger');
+      }
+    });
+  }
+
+  // Update local DB sync UI from status data
+  function updateLocalDbSyncUI(sd) {
+    const countEl = document.getElementById('local-db-customer-count');
+    const lastEl = document.getElementById('local-db-last-sync');
+    const nextEl = document.getElementById('local-db-next-sync');
+    const errEl = document.getElementById('local-db-sync-errors');
+    const statusEl = document.getElementById('local-db-sync-status');
+    const selectEl = document.getElementById('select-sync-interval');
+
+    if (countEl) countEl.textContent = sd.customerCount || 0;
+    if (lastEl) lastEl.textContent = sd.lastSync || 'Never';
+    if (nextEl) {
+      const secs = sd.nextSyncIn || 0;
+      if (secs > 0) {
+        const m = Math.floor(secs / 60);
+        const s = secs % 60;
+        nextEl.textContent = m > 0 ? `${m}m ${s}s` : `${s}s`;
+      } else {
+        nextEl.textContent = 'Soon';
+      }
+    }
+    if (errEl) errEl.textContent = sd.syncErrors || 0;
+    if (statusEl) {
+      if (sd.syncRunning) {
+        statusEl.innerHTML = '<i class="fa-solid fa-circle text-success" style="font-size:0.5rem;vertical-align:middle;"></i> Running';
+      } else {
+        statusEl.innerHTML = '<i class="fa-solid fa-circle text-secondary" style="font-size:0.5rem;vertical-align:middle;"></i> Idle';
+      }
+    }
+    if (selectEl && sd.intervalMs) {
+      selectEl.value = String(sd.intervalMs);
+    }
+  }
+
+  // Poll sync status every 10 seconds
+  async function pollLocalDbStatus() {
+    try {
+      const res = await fetch('/api/sync_status');
+      if (res.ok) {
+        const sd = await res.json();
+        updateLocalDbSyncUI(sd);
+      }
+    } catch (e) {}
+  }
+  if (isRealESP32) {
+    pollLocalDbStatus(); // Initial fetch
+    setInterval(pollLocalDbStatus, 10000); // Poll every 10s
+  }
+  // ==================== END LOCAL DB SYNC CARD ====================
+
   // Load cached Sheets data if it's fresh and from a real source (not mock)
   const cached = localStorage.getItem('vvarma_sheets_cache');
   if (cached) {
@@ -14088,26 +14708,26 @@ document.addEventListener('DOMContentLoaded', () => {
   // Keep cache-age badge updated every minute
   setInterval(updateVarmaCacheStatus, 60000);
 
-  // Auto-fetch fresh data from Sheets only if a real script URL is configured
-  const scriptUrlForCheck = localStorage.getItem('sheets_script_url') || '';
-  const hasRealUrl = scriptUrlForCheck && scriptUrlForCheck.includes('script.google.com');
-  if (hasRealUrl) {
+  // Auto-fetch data: on real ESP32, automatically fetch SD card database and refresh every 30 seconds
+  if (isRealESP32) {
     fetchVarmaData();
-    // Auto-refresh VSRMS data every 5 minutes
-    setInterval(() => {
-      const url = localStorage.getItem('sheets_script_url') || '';
-      if (url && url.includes('script.google.com')) {
-        fetchVarmaData();
-      }
-    }, 5 * 60 * 1000);
-  } else if (isRealESP32) {
-    // On real ESP32: wait for /status to populate scriptUrl (setupRealPoller handles it)
-    // Don't auto-fetch now; user can click Reload after connectivity is established
-    clearVarmaUI();
-    updateVarmaCacheStatus();
+    setInterval(fetchVarmaData, 30000);
   } else {
-    clearVarmaUI();
-    updateVarmaCacheStatus();
+    // Auto-fetch fresh data from Sheets only if a real script URL is configured
+    const scriptUrlForCheck = localStorage.getItem('sheets_script_url') || '';
+    const hasRealUrl = scriptUrlForCheck && scriptUrlForCheck.includes('script.google.com');
+    if (hasRealUrl) {
+      fetchVarmaData();
+      setInterval(() => {
+        const url = localStorage.getItem('sheets_script_url') || '';
+        if (url && url.includes('script.google.com')) {
+          fetchVarmaData();
+        }
+      }, 5 * 60 * 1000);
+    } else {
+      clearVarmaUI();
+      updateVarmaCacheStatus();
+    }
   }
 });
 
@@ -14125,9 +14745,9 @@ function clearVarmaUI() {
   });
 
   // Reset tables
-  ['table-call-history', 'table-messages', 'table-unknown-numbers', 'table-registered-numbers', 'table-complaints', 'table-warranty-details'].forEach(tId => {
+  ['table-call-history', 'table-messages', 'table-unknown-numbers', 'table-registered-numbers', 'table-complaints', 'table-warranty-details', 'table-orders', 'table-ledger'].forEach(tId => {
     const tbody = document.querySelector(`#${tId} tbody`);
-    if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">Click "Reload from Cloud" to fetch data</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4"><i class="fa-solid fa-circle-info me-2"></i>No data found on SD card. Click "Reload from Cloud" to sync from Google Sheets.</td></tr>';
   });
 }
 
@@ -14158,53 +14778,87 @@ async function fetchVarmaData() {
       if (el) el.innerText = '—';
     });
 
-    ['table-call-history', 'table-messages', 'table-unknown-numbers', 'table-registered-numbers', 'table-complaints', 'table-warranty-details'].forEach(tId => {
+    ['table-call-history', 'table-messages', 'table-unknown-numbers', 'table-registered-numbers', 'table-complaints', 'table-warranty-details', 'table-orders', 'table-ledger'].forEach(tId => {
       const tbody = document.querySelector(`#${tId} tbody`);
       if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-3"><i class="fa-solid fa-spinner fa-spin me-2"></i>Fetching from Cloud…</td></tr>';
     });
   }
 
   try {
-    // Strict check: need a real Apps Script URL, not just any truthy value
-    const configuredUrl = localStorage.getItem('sheets_script_url') || esp32State.googleSheets?.scriptUrl || '';
-    const hasRealUrl = configuredUrl && configuredUrl.includes('script.google.com');
-    if (!hasRealUrl && isRealESP32) {
-      throw new Error('Google Sheets Script URL not configured. Go to Settings → Google Sheets to set it up.');
-    }
-
     let data;
     if (isRealESP32) {
-      let directSuccess = false;
-      const sheetId = localStorage.getItem('vvarma_sheet_id') || (esp32State.googleSheets?.sheetId) || '';
-      const mac = (esp32State.system?.mac) || '';
-      
-      if (hasRealUrl) {
+      // ── STEP 1: Try loading from SD card local cache first ──────────────────
+      let sdData = null;
+      try {
+        console.log('[VARMA Sync] Step 1: Loading from SD card local cache /get_varma_data...');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout for local SD
+        const sdRes = await fetch('/get_varma_data', { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (sdRes.ok) {
+          const rawText = await sdRes.text();
+          // Strip JSONP wrapper if present
+          const jsonpMatch = rawText.match(/^[a-zA-Z_$][\w$]*\s*\(\s*([\s\S]*)\s*\)\s*;?\s*$/);
+          const cleanText = jsonpMatch ? jsonpMatch[1] : rawText;
+          const parsed = JSON.parse(cleanText);
+          // Only use SD data if it has actual content (not empty {})
+          if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 2) {
+            sdData = parsed;
+            console.log('[VARMA Sync] Step 1 SUCCESS: Loaded data from SD card cache.');
+          } else {
+            console.log('[VARMA Sync] Step 1: SD cache is empty or minimal — proceeding to cloud sync.');
+          }
+        }
+      } catch (sdErr) {
+        console.warn('[VARMA Sync] Step 1: SD card fetch failed:', sdErr.message);
+      }
+
+      if (sdData) {
+        // We have valid local data — use it immediately
+        data = sdData;
+      } else {
+        // ── STEP 2: No local data — try direct JSONP to Google Sheets ──────────
+        const configuredUrl = localStorage.getItem('sheets_script_url') || esp32State.googleSheets?.scriptUrl || '';
+        const hasRealUrl = configuredUrl && configuredUrl.includes('script.google.com');
+        if (!hasRealUrl) {
+          throw new Error('No local SD data found and Google Sheets Script URL is not configured. Go to Settings → Google Sheets to set it up.');
+        }
+
+        let directSuccess = false;
+        const sheetId = localStorage.getItem('vvarma_sheet_id') || (esp32State.googleSheets?.sheetId) || '';
+        const mac = (esp32State.system?.mac) || '';
+
         try {
-          console.log('[VARMA Sync] Attempting direct browser-to-Sheets JSONP fetch...');
-          const directUrl = configuredUrl + (configuredUrl.includes('?') ? '&' : '?') + 
+          console.log('[VARMA Sync] Step 2: Attempting direct browser-to-Sheets JSONP fetch...');
+          const directUrl = configuredUrl + (configuredUrl.includes('?') ? '&' : '?') +
             `action=getVarmaData&sheetId=${encodeURIComponent(sheetId)}&mac=${encodeURIComponent(mac)}`;
-          
           data = await fetchJsonp(directUrl, 15000);
           if (data && data.ok !== false) {
             directSuccess = true;
-            console.log('[VARMA Sync] Direct browser JSONP sync successful!');
+            console.log('[VARMA Sync] Step 2 SUCCESS: Direct browser JSONP sync successful!');
           } else {
-            console.warn('[VARMA Sync] Direct JSONP sync returned unsuccessful status:', data);
+            console.warn('[VARMA Sync] Step 2: Direct JSONP sync returned unsuccessful status:', data);
           }
         } catch (err) {
-          console.warn('[VARMA Sync] Direct JSONP sync fetch failed or timed out, falling back to ESP32 proxy:', err.message);
+          console.warn('[VARMA Sync] Step 2: JSONP failed, falling back to ESP32 proxy:', err.message);
         }
-      }
-      
-      if (!directSuccess) {
-        console.log('[VARMA Sync] Syncing via ESP32 proxy...');
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 55000); // 55s timeout
-        
-        const response = await fetch('/get_varma_data', { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        data = await response.json();
+
+        if (!directSuccess) {
+          // ── STEP 3: ESP32 proxy ─────────────────────────────────────────────
+          console.log('[VARMA Sync] Step 3: Syncing via ESP32 proxy /api/sync_now...');
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 55000);
+          const response = await fetch('/get_varma_data', { signal: controller.signal });
+          clearTimeout(timeoutId);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          let rawText = await response.text();
+          const jsonpMatch = rawText.match(/^[a-zA-Z_$][\w$]*\s*\(\s*([\s\S]*)\s*\)\s*;?\s*$/);
+          if (jsonpMatch) {
+            console.warn('[VARMA Sync] Proxy returned JSONP-wrapped response, stripping wrapper.');
+            rawText = jsonpMatch[1];
+          }
+          data = JSON.parse(rawText);
+        }
       }
     } else {
       // Mock mode
@@ -14265,18 +14919,13 @@ async function fetchVarmaData() {
   } catch (error) {
     console.warn('Fetch VARMA Data Error:', error);
     
-    // Clear cache and UI indicators on failure
-    localStorage.removeItem('vvarma_sheets_cache');
-    clearVarmaUI();
+    // DO NOT clear cache or wipe UI on sync error/dropout. Keep showing last loaded data.
     updateVarmaCacheStatus();
 
     const configuredUrl = localStorage.getItem('sheets_script_url') || esp32State.googleSheets?.scriptUrl || '';
     const isConfiguredCheck = configuredUrl && configuredUrl.includes('script.google.com');
     if (!isConfiguredCheck) {
       showToast('VARMA Panel', '⚠️ Google Sheets Script URL not configured. Go to Settings → Google Sheets integration to set it up.', 'warning');
-    } else {
-      showToast('VARMA Panel', '❌ Cloud sync failed: ' + error.message, 'danger');
-      addNotification('VARMA Panel Sync Failure', 'Sync failed: ' + error.message, 'danger');
     }
   } finally {
     window.varmaSyncInProgress = false;
@@ -14288,6 +14937,9 @@ async function fetchVarmaData() {
 }
 
 function populateVarmaPanel(data) {
+  // Cache data globally for profile dialog lookup
+  window.lastVarmaData = data;
+
   // 1. Populate top cards
   const tc = data.topCards || {};
   document.getElementById('vp-complaints-filed').innerText     = tc.complaintsFiled      || 0;
@@ -14324,6 +14976,11 @@ function populateVarmaPanel(data) {
     }
     arr.forEach(rowObj => {
       const tr = document.createElement('tr');
+      if (tableId === 'table-registered-numbers') {
+        tr.style.cursor = 'pointer';
+        tr.title = 'Click to view full customer database profile';
+        tr.addEventListener('click', () => showCustomerProfile(rowObj));
+      }
       columns.forEach(col => {
         const td = document.createElement('td');
         td.innerText = rowObj[col] !== undefined ? rowObj[col] : '-';
@@ -14340,6 +14997,8 @@ function populateVarmaPanel(data) {
   populateTable('table-registered-numbers', data.registeredNumbers || [], ['name', 'number', 'product', 'serial', 'status']);
   populateTable('table-complaints',      data.complaints       || [], ['id', 'date', 'name', 'number', 'desc', 'status']);
   populateTable('table-warranty-details',data.warranties       || [], ['date', 'name', 'number', 'product', 'serial', 'expiry']);
+  populateTable('table-orders',          data.orders           || [], ['date', 'id', 'name', 'mobile', 'status', 'amount']);
+  populateTable('table-ledger',          data.ledger           || [], ['date', 'id', 'name', 'mobile', 'total', 'paid', 'balance']);
 
   // Also update registeredCustomers for incoming call lookup
   if (data.registeredNumbers && data.registeredNumbers.length > 0) {
@@ -14961,7 +15620,174 @@ function initGsmControls() {
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-hc-add')?.addEventListener('click', addHelpCenterNumber);
   initGsmControls();
+
+  // Register Customer form submission
+  document.getElementById('form-register-customer')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('btn-submit-customer');
+    if (!btn) return;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i>Registering...';
+
+    const phone = document.getElementById('rc-phone').value;
+    const name = document.getElementById('rc-name').value;
+    const product = document.getElementById('rc-product').value;
+    const serial = document.getElementById('rc-serial').value;
+
+    try {
+      const resp = await fetch('/api/add_customer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}&product=${encodeURIComponent(product)}&serial=${encodeURIComponent(serial)}`
+      });
+      const result = await resp.json();
+      if (result.status === 'success') {
+        showToast('Success', 'Customer registered successfully. Queued for background sync.', 'success');
+        const modalEl = document.getElementById('register-customer-modal');
+        const modal = bootstrap.Modal.getInstance(modalEl);
+        if (modal) modal.hide();
+        document.getElementById('form-register-customer').reset();
+        
+        // Refresh local table locally
+        if (window.lastVarmaData && window.lastVarmaData.registeredNumbers) {
+          window.lastVarmaData.registeredNumbers.push({
+            name: name,
+            number: phone,
+            product: product,
+            serial: serial,
+            status: 'Active'
+          });
+          // Find standard populateTable or call manual redraw
+          const tbody = document.querySelector(`#table-registered-numbers tbody`);
+          if (tbody) {
+            tbody.innerHTML = '';
+            window.lastVarmaData.registeredNumbers.forEach(rowObj => {
+              const tr = document.createElement('tr');
+              tr.style.cursor = 'pointer';
+              tr.title = 'Click to view full customer database profile';
+              tr.addEventListener('click', () => showCustomerProfile(rowObj));
+              ['name', 'number', 'product', 'serial', 'status'].forEach(col => {
+                const td = document.createElement('td');
+                td.innerText = rowObj[col] !== undefined ? rowObj[col] : '-';
+                tr.appendChild(td);
+              });
+              tbody.appendChild(tr);
+            });
+          }
+        }
+      } else {
+        showToast('Error', result.message || 'Registration failed', 'danger');
+      }
+    } catch (err) {
+      showToast('Error', 'Failed to connect to device API', 'danger');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = 'Register';
+    }
+  });
+
+  // Search filter for registered numbers
+  document.getElementById('registered-numbers-search')?.addEventListener('input', (e) => {
+    const term = e.target.value.toLowerCase().trim();
+    if (!window.lastVarmaData || !window.lastVarmaData.registeredNumbers) return;
+    
+    const filtered = window.lastVarmaData.registeredNumbers.filter(r => 
+      (r.name && r.name.toLowerCase().includes(term)) ||
+      (r.number && r.number.toLowerCase().includes(term)) ||
+      (r.serial && r.serial.toLowerCase().includes(term))
+    );
+    
+    const tbody = document.querySelector(`#table-registered-numbers tbody`);
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    if (!filtered || !filtered.length) {
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">No data available</td></tr>`;
+      return;
+    }
+    filtered.forEach(rowObj => {
+      const tr = document.createElement('tr');
+      tr.style.cursor = 'pointer';
+      tr.title = 'Click to view full customer database profile';
+      tr.addEventListener('click', () => showCustomerProfile(rowObj));
+      ['name', 'number', 'product', 'serial', 'status'].forEach(col => {
+        const td = document.createElement('td');
+        td.innerText = rowObj[col] !== undefined ? rowObj[col] : '-';
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+  });
 });
+
+function showCustomerProfile(customer) {
+  // Populate basic info
+  document.getElementById('prof-name').innerText = customer.name || 'Unknown';
+  document.getElementById('prof-phone').innerText = customer.number || '—';
+  document.getElementById('prof-product').innerText = customer.product || '—';
+  document.getElementById('prof-serial').innerText = customer.serial || '—';
+  
+  const statusEl = document.getElementById('prof-status');
+  statusEl.innerText = customer.status || 'Active';
+  if (String(customer.status).toLowerCase().includes('active')) {
+    statusEl.className = 'badge bg-success-subtle text-success mt-2';
+  } else {
+    statusEl.className = 'badge bg-secondary-subtle text-muted mt-2';
+  }
+
+  // Filter and populate Purchases
+  const orders = window.lastVarmaData ? (window.lastVarmaData.orders || []) : [];
+  const userOrders = orders.filter(o => 
+    (o.mobile && o.mobile.replace(/\D/g, '').endsWith(customer.number.replace(/\D/g, '').slice(-10))) ||
+    (o.name && o.name.toLowerCase() === customer.name.toLowerCase())
+  );
+  populateProfileTable('prof-table-purchases', userOrders, ['date', 'id', 'status', 'amount'], 'No purchases found');
+
+  // Filter and populate Ledger & calculate balance
+  const ledger = window.lastVarmaData ? (window.lastVarmaData.ledger || []) : [];
+  const userLedger = ledger.filter(l => 
+    (l.mobile && l.mobile.replace(/\D/g, '').endsWith(customer.number.replace(/\D/g, '').slice(-10))) ||
+    (l.name && l.name.toLowerCase() === customer.name.toLowerCase())
+  );
+  populateProfileTable('prof-table-ledger', userLedger, ['date', 'id', 'total', 'paid', 'balance'], 'No ledger transactions found');
+
+  let bal = 0;
+  if (userLedger.length > 0) {
+    bal = parseFloat(userLedger[userLedger.length - 1].balance) || 0;
+  }
+  document.getElementById('prof-balance').innerText = '₹' + bal.toFixed(2);
+
+  // Filter and populate Complaints
+  const complaints = window.lastVarmaData ? (window.lastVarmaData.complaints || []) : [];
+  const userComplaints = complaints.filter(c => 
+    (c.number && c.number.replace(/\D/g, '').endsWith(customer.number.replace(/\D/g, '').slice(-10))) ||
+    (c.name && c.name.toLowerCase() === customer.name.toLowerCase())
+  );
+  populateProfileTable('prof-table-complaints', userComplaints, ['id', 'date', 'desc', 'status'], 'No complaints filed');
+
+  // Show modal
+  const modal = new bootstrap.Modal(document.getElementById('customer-profile-modal'));
+  modal.show();
+}
+
+function populateProfileTable(tableId, arr, columns, emptyMsg) {
+  const tbody = document.querySelector(`#${tableId} tbody`);
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  if (!arr || !arr.length) {
+    tbody.innerHTML = `<tr><td colspan="${columns.length}" class="text-center text-muted small py-3">${emptyMsg}</td></tr>`;
+    return;
+  }
+  arr.forEach(rowObj => {
+    const tr = document.createElement('tr');
+    columns.forEach(col => {
+      const td = document.createElement('td');
+      td.className = 'small';
+      td.innerText = rowObj[col] !== undefined ? rowObj[col] : '-';
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+}
 
 // ============================================================
 // SIMULATOR & TEST PANEL LOGIC

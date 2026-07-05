@@ -1,5 +1,5 @@
 {
-  "version": "v1.3-IVR",
+  "version": "v1.4-IVR",
   "url": "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/firmware.bin",
-  "notes": "V-VARMA IVR v1.3 - SD card streaming, auto OTA, LED power indicator"
+  "notes": "V-VARMA IVR v1.4 - SD card local customer DB, instant caller validation, periodic sync, OTA CORS fix, SD.writeRAW compile error fixed, manualSync lambda->named task, audioTask mutex race fixed, status API STATE_ACTIVE_CALL/COLLECTING_DTMF cases added, CONTINUOUS_VOICE_LOOP guard fixed, index_html version synced"
 }

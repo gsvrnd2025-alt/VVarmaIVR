@@ -18,7 +18,7 @@ const char wifi_config_html[] PROGMEM = R"rawliteral(
             --card-bg: #1a1a1a;
             --border-color: #333;
         }
-        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Space Grotesk', sans-serif; }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
         body { background: var(--bg-dark); color: #eee; min-height: 100vh; padding: 20px; display: flex; align-items: center; justify-content: center; }
         .input-group-v { position: relative; margin-bottom: 1.2rem; display: flex; gap: 8px; }
         .input-group-p { position: relative; margin-bottom: 1.2rem; }

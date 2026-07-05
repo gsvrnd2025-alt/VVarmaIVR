@@ -56,6 +56,7 @@
 #include "soc/rtc_cntl_reg.h"
 #include "index_html.h"
 #include "wifi_config_html.h"
+#include <vector>      // For std::vector used in sdDbFlushOfflineQueue
 
 // Forward definition of WAV Header parsing structure to satisfy Arduino auto-prototypes
 struct WavHeaderInfo {
@@ -67,7 +68,7 @@ struct WavHeaderInfo {
 };
 
 // ==================== DEFINITIONS ====================
-#define FIRMWARE_VERSION "v1.3-IVR"
+#define FIRMWARE_VERSION "v2.5.0-IVR"
 #define DEVICE_NAME "vvarmaivr"
 #define AP_SSID "V VARMA IVR"
 #define AP_PASS "GSVIVR001"
@@ -76,14 +77,18 @@ struct WavHeaderInfo {
 #define CONTINUOUS_VOICE_LOOP false
 #define VOICE_LOOP_PATH "/01/003.wav" // Path to play and loop (WAV format only)
 
+// ─── Debug Serial Configuration ──────────────────────────────────────────
+#define ENABLE_DEBUG_SERIAL false // Set to true for debugging on PC, false for standalone mode to prevent boot hangs
+
+
 #define GSM_RX_PIN 16
 #define GSM_TX_PIN 17
 #define GSM_BAUD 115200
 #define GSM_PWRKEY_PIN -1 // Disabled (For boards with built-in auto power-on)
 
 // ─── Indicators ────────────────────────────────────────────────────────────────
-#define LED_PIN        2   // Red  LED — ringing / error
-#define LED_GREEN     13   // Green LED — active / connected / WiFi blink
+#define LED_PIN        2   // Red  LED — error / offline / ringing / no tower
+#define LED_GREEN     13   // Green LED — active / connected / WiFi / tower registered
 #define LED_SD_STATUS  4   // SD Card Status LED — GPIO 4
 #define BUZZER_PIN    27   // Piezo buzzer (moved from 25 to 27)
 #define RESET_BUTTON_PIN 0 // Boot / factory-reset button
@@ -101,6 +106,19 @@ bool mp3Initialized = false;
 bool mp3QueryWorks = false; // Kept for status api compatibility
 SemaphoreHandle_t logMutex = NULL;
 SemaphoreHandle_t audioMutex = NULL;
+SemaphoreHandle_t sdMutex = NULL;
+
+bool sdTake(uint32_t timeoutMs = 5000) {
+  if (sdMutex == NULL) return true;
+  return xSemaphoreTake(sdMutex, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+}
+
+void sdGive() {
+  if (sdMutex != NULL) {
+    xSemaphoreGive(sdMutex);
+  }
+}
+
 FS* myFS = &SD;
 volatile bool serialUploadActive = false; // Suppress logging during serial file transfer
 
@@ -217,7 +235,11 @@ bool parseWavFile(File &file, WavHeaderInfo &info) {
 
 // Audio Task: Decodes WAV data from file and puts it in the ring buffer
 void audioTask(void *pvParameters) {
-  Serial.println("[AudioTask] Background WAV decoder task started on Core 0.");
+#if ENABLE_DEBUG_SERIAL
+  if (Serial && Serial.availableForWrite() > 64) {
+    Serial.println("[AudioTask] Background WAV decoder task started on Core 0.");
+  }
+#endif
   File wavFile;
   WavHeaderInfo wavInfo;
   bool fileOpen = false;
@@ -237,6 +259,19 @@ void audioTask(void *pvParameters) {
     }
     
     if (nextAudioPending) {
+      // Read path and pending flag under mutex to prevent race with main-loop writer
+      char localAudioPath[64] = "";
+      if (audioMutex != NULL && xSemaphoreTake(audioMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        strncpy(localAudioPath, nextAudioPath, sizeof(localAudioPath) - 1);
+        localAudioPath[sizeof(localAudioPath) - 1] = '\0';
+        nextAudioPending = false;
+        xSemaphoreGive(audioMutex);
+      } else {
+        // Failed to take mutex — skip this cycle, try next iteration
+        vTaskDelay(pdMS_TO_TICKS(5));
+        continue;
+      }
+      
       if (fileOpen) {
         wavFile.close();
         fileOpen = false;
@@ -245,51 +280,112 @@ void audioTask(void *pvParameters) {
       ringTail = 0;
       
       fs::FS *targetFS = myFS;
-      bool found = targetFS->exists(nextAudioPath);
-      if (!found) {
-        if (targetFS == &SD && SPIFFS.exists(nextAudioPath)) {
-          targetFS = &SPIFFS;
-          found = true;
-          webLog("[AudioTask] File not on SD, using SPIFFS fallback: " + String(nextAudioPath));
-        } else if (targetFS == &SPIFFS && SD.exists(nextAudioPath)) {
-          targetFS = &SD;
-          found = true;
-          webLog("[AudioTask] File not on SPIFFS, using SD fallback: " + String(nextAudioPath));
-        }
-      }
-      
-      if (found) {
-        wavFile = targetFS->open(nextAudioPath, FILE_READ);
-        if (wavFile) {
-          if (parseWavFile(wavFile, wavInfo)) {
-            fileOpen = true;
-            audioPlaying = true;
-            
-            // Adjust timer frequency dynamically based on sample rate
-            if (audioTimer) {
-              uint32_t alarmVal = 160000 / wavInfo.sampleRate;
-              if (alarmVal < 1) alarmVal = 1;
-              timerAlarm(audioTimer, alarmVal, true, 0);
+      if (sdTake(2000)) {
+        bool found = false;
+        // Heap guard: SD.open() allocates internally; skip if heap too low
+        if (ESP.getFreeHeap() < 20000) {
+          webLog("[AudioTask] WARN: Low heap (" + String(ESP.getFreeHeap()) + "B), skipping SD open.");
+          audioPlaying = false;
+          sdGive();
+        } else {
+          try {
+            found = targetFS->exists(localAudioPath);
+            if (!found) {
+              // Try formatting track with 2 or 4 digits
+              int fld = 0, trk = 0;
+              if (sscanf(localAudioPath, "/%d/%d.wav", &fld, &trk) == 2) {
+                char altPath[64];
+                snprintf(altPath, sizeof(altPath), "/%02d/%02d.wav", fld, trk);
+                if (targetFS->exists(altPath)) {
+                  strncpy(localAudioPath, altPath, sizeof(localAudioPath) - 1);
+                  localAudioPath[sizeof(localAudioPath) - 1] = '\0';
+                  found = true;
+                } else {
+                  snprintf(altPath, sizeof(altPath), "/%02d/%04d.wav", fld, trk);
+                  if (targetFS->exists(altPath)) {
+                    strncpy(localAudioPath, altPath, sizeof(localAudioPath) - 1);
+                    localAudioPath[sizeof(localAudioPath) - 1] = '\0';
+                    found = true;
+                  }
+                }
+              }
+            }
+            if (!found) {
+              if (targetFS == &SD && SPIFFS.exists(localAudioPath)) {
+                targetFS = (fs::FS*)&SPIFFS;
+                found = true;
+                webLog("[AudioTask] File not on SD, using SPIFFS fallback: " + String(localAudioPath));
+              } else if (targetFS == &SPIFFS && SD.exists(localAudioPath)) {
+                targetFS = &SD;
+                found = true;
+                webLog("[AudioTask] File not on SPIFFS, using SD fallback: " + String(localAudioPath));
+              }
+            }
+            if (!found) {
+              // Try formatting track with 2 or 4 digits on the alternative filesystem too
+              int fld = 0, trk = 0;
+              if (sscanf(localAudioPath, "/%d/%d.wav", &fld, &trk) == 2) {
+                char altPath[64];
+                fs::FS *altFS = (targetFS == &SD) ? (fs::FS*)&SPIFFS : (fs::FS*)&SD;
+                snprintf(altPath, sizeof(altPath), "/%02d/%02d.wav", fld, trk);
+                if (altFS->exists(altPath)) {
+                  targetFS = altFS;
+                  strncpy(localAudioPath, altPath, sizeof(localAudioPath) - 1);
+                  localAudioPath[sizeof(localAudioPath) - 1] = '\0';
+                  found = true;
+                  webLog("[AudioTask] File found on fallback FS with 2-digit format: " + String(localAudioPath));
+                } else {
+                  snprintf(altPath, sizeof(altPath), "/%02d/%04d.wav", fld, trk);
+                  if (altFS->exists(altPath)) {
+                    targetFS = altFS;
+                    strncpy(localAudioPath, altPath, sizeof(localAudioPath) - 1);
+                    localAudioPath[sizeof(localAudioPath) - 1] = '\0';
+                    found = true;
+                    webLog("[AudioTask] File found on fallback FS with 4-digit format: " + String(localAudioPath));
+                  }
+                }
+              }
             }
             
-            webLog("[AudioTask] Playing WAV: " + String(nextAudioPath) + 
-                   " | SR: " + String(wavInfo.sampleRate) + "Hz" +
-                   " | Ch: " + String(wavInfo.channels) + 
-                   " | Bits: " + String(wavInfo.bitsPerSample));
-          } else {
-            wavFile.close();
-            webLog("[AudioTask] ERROR: Invalid WAV header in " + String(nextAudioPath));
+            if (found) {
+              wavFile = targetFS->open(localAudioPath, FILE_READ);
+              if (wavFile) {
+                if (parseWavFile(wavFile, wavInfo)) {
+                  fileOpen = true;
+                  audioPlaying = true;
+                  
+                  // Adjust timer frequency dynamically based on sample rate
+                  if (audioTimer) {
+                    uint32_t alarmVal = 160000 / wavInfo.sampleRate;
+                    if (alarmVal < 1) alarmVal = 1;
+                    timerAlarm(audioTimer, alarmVal, true, 0);
+                  }
+                  
+                  webLog("[AudioTask] Playing WAV: " + String(localAudioPath) + 
+                         " | SR: " + String(wavInfo.sampleRate) + "Hz" +
+                         " | Ch: " + String(wavInfo.channels) + 
+                         " | Bits: " + String(wavInfo.bitsPerSample));
+                } else {
+                  wavFile.close();
+                  webLog("[AudioTask] ERROR: Invalid WAV header in " + String(localAudioPath));
+                  audioPlaying = false;
+                }
+              } else {
+                webLog("[AudioTask] ERROR: Failed to open " + String(localAudioPath));
+                audioPlaying = false;
+              }
+            } else {
+              webLog("[AudioTask] ERROR: File not found: " + String(localAudioPath));
+              audioPlaying = false;
+            }
+          } catch (...) {
+            webLog("[AudioTask] EXCEPTION caught during SD open — heap exhausted? Free: " + String(ESP.getFreeHeap()));
             audioPlaying = false;
+            if (wavFile) wavFile.close();
           }
-        } else {
-          webLog("[AudioTask] ERROR: Failed to open " + String(nextAudioPath));
-          audioPlaying = false;
+          sdGive();
         }
-      } else {
-        webLog("[AudioTask] ERROR: File not found: " + String(nextAudioPath));
-        audioPlaying = false;
       }
-      nextAudioPending = false;
     }
     
     if (fileOpen && audioPlaying) {
@@ -351,70 +447,58 @@ void mp3SetVolume(uint8_t vol) {
 }
 
 // safePlayAudio: triggers playback of a WAV file
+// NOTE: Does NOT check file existence here — the audioTask handles that internally.
+// Checking here with sdTake() causes deadlocks when audioTask is already streaming
+// (holding sdMutex while reading), causing sdTake to time out and every play to be skipped.
 bool safePlayAudio(fs::FS &fs, const char* path) {
   if (serialUploadActive) return false;
   webLog("[Audio] safePlayAudio: " + String(path));
   
-  bool fileExists = fs.exists(path);
-  if (!fileExists) {
-    if (&fs == &SD && SPIFFS.exists(path)) {
-      fileExists = true;
-      webLog("[Audio] Found file on fallback SPIFFS: " + String(path));
-    } else if (&fs == &SPIFFS && SD.exists(path)) {
-      fileExists = true;
-      webLog("[Audio] Found file on fallback SD: " + String(path));
-    }
-  }
-  
-  if (!fileExists) {
-    webLog("[Audio] SKIP — file not found on SD or SPIFFS: " + String(path));
-    return false;
-  }
-  
   if (audioMutex != NULL && xSemaphoreTake(audioMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-    // Pass the path to the background task
+    // Pass the path directly to the background audio task
     strncpy(nextAudioPath, path, sizeof(nextAudioPath) - 1);
     nextAudioPath[sizeof(nextAudioPath) - 1] = '\0';
     nextAudioPending = true;
-    audioPlaying = true; // Set to true immediately so checkAudioFinished works correctly
+    audioStopPending = false;           // Cancel any pending stop
+    audioPlaying = true;                // Signal playing immediately so state machine waits
     xSemaphoreGive(audioMutex);
     return true;
   } else {
-    webLog("[Audio] safePlayAudio FAILED to take mutex!");
+    webLog("[Audio] safePlayAudio FAILED to take audioMutex!");
     return false;
   }
 }
 
-// mp3Play: plays tracks from /XX/YYY.wav (or fallback)
+// mp3Play: plays tracks from /XX/YYY.wav
+// Always tries .wav first. The audioTask handles file-not-found internally.
+// Do NOT call fs.exists() here — it would race with the audioTask holding sdMutex.
 void mp3Play(uint8_t folder, uint8_t track) {
   if (!mp3Initialized) {
     webLog("[Audio] mp3Play called before mp3Init — ignoring.");
     return;
   }
   char path[32];
-  fs::FS &fs = *myFS;
-
-  // Try .wav → .mp3 → .amr (We only decode .wav, but we check path existence)
   snprintf(path, sizeof(path), "/%02d/%03d.wav", folder, track);
-  if (!fs.exists(path)) {
-    snprintf(path, sizeof(path), "/%02d/%03d.mp3", folder, track);
-    if (fs.exists(path)) {
-      webLog("[Audio] Warning: MP3 playback requested, but only WAV is supported. Attempting to play as WAV.");
-    } else {
-      snprintf(path, sizeof(path), "/%02d/%03d.amr", folder, track);
-      if (fs.exists(path)) {
-        webLog("[Audio] Warning: AMR playback requested, but only WAV is supported. Attempting to play as WAV.");
-      }
-    }
-  }
-
-  safePlayAudio(fs, path);
+  safePlayAudio(*myFS, path);
 }
 
 // mp3Stop: stops playback
 void mp3Stop() {
   audioStopPending = true;
   webLog("[Audio] Stop requested.");
+}
+
+// hangupCall: Hangs up active call with safety delays to prevent AT command collisions
+void hangupCall() {
+  webLog("[GSM] Hanging up active call (ATH & AT+CHUP)...");
+  audioStopPending = true; // Stop any playing audio task immediately
+  delay(200);              // Give audio task a moment to release file and timers
+  Serial2.println("ATH");
+  delay(100);
+  Serial2.println("AT+CHUP");
+  delay(1500);             // CRITICAL: Give GSM module 1.5s to disconnect from network and stabilize before sending new AT commands
+  // Flush any trailing garbage responses from hangup (like "OK" or "NO CARRIER")
+  while (Serial2.available() > 0) { Serial2.read(); }
 }
 
 // mp3PlayAsync: non-blocking play
@@ -425,6 +509,12 @@ void mp3PlayAsync(uint8_t folder, uint8_t track) {
 // mp3Init: configures pins, starts timer and task
 void mp3Init() {
   webLog("[HEAP] mp3Init start. Free: " + String(ESP.getFreeHeap()) + " B");
+  
+  // Create SD Binary Semaphore (used as mutex without priority inheritance bugs)
+  sdMutex = xSemaphoreCreateBinary();
+  if (sdMutex != NULL) {
+    xSemaphoreGive(sdMutex);
+  }
   
   // Set up DAC pin GPIO 25
   pinMode(25, ANALOG);
@@ -443,7 +533,7 @@ void mp3Init() {
 
   // Spawn audio task on Core 0 (small stack size required: 8KB)
   BaseType_t res = xTaskCreatePinnedToCore(
-      audioTask, "audio_task", 8192, NULL, 5, NULL, 0);
+      audioTask, "audio_task", 12288, NULL, 5, NULL, 0);
   if (res != pdPASS) {
     webLog("[Audio] CRITICAL: Failed to create audioTask!");
   }
@@ -513,14 +603,25 @@ bool wifiConnecting = false;
 enum CallState {
   STATE_IDLE,
   STATE_RINGING,
-  STATE_VERIFY_USER,
   STATE_ANSWERING,
   STATE_CALL_CONNECTED,
-  STATE_PLAY_WELCOME,
-  STATE_PLAY_MENU,
-  STATE_WAIT_DTMF,
-  STATE_PLAY_SELECTION,
-  STATE_RETURN_MENU,
+  STATE_PLAY_WELCOME,              // Plays /01/001.wav
+  STATE_WAIT_LANGUAGE_DTMF,        // Waits for 1, 2, or 3
+  STATE_VERIFY_USER,               // Plays /XX/002.wav and runs validation
+  STATE_PLAY_VERIFICATION_SUCCESS, // Plays /XX/003.wav
+  STATE_PLAY_MENU,                 // Plays /XX/005.wav
+  STATE_WAIT_MENU_DTMF,            // Waits for 1, 2, 3, or 4
+  STATE_COLLECTING_WARRANTY_NO,    // Plays /XX/006.wav and buffers digits
+  STATE_VERIFYING_WARRANTY,        // Wait for Sheets warranty check result
+  STATE_COLLECTING_COMPLAINT_NO,   // Plays /XX/010.wav and buffers digits
+  STATE_REGISTERING_COMPLAINT,     // Wait for Sheets complaint result
+  STATE_HELP_CENTER,               // Plays /XX/012.wav
+  STATE_WAIT_HELP_CENTER_DTMF,     // Waits for 1, 2, or 9
+  STATE_COLLECTING_INSTALLATION_NO,// Plays /XX/013.wav and buffers digits
+  STATE_REGISTERING_INSTALLATION,  // Wait for Sheets installation result
+  STATE_CONNECTING_CUSTOMER_CARE,  // Plays /XX/015.wav, holds 8-10 seconds
+  STATE_PLAY_REPEAT_MENU,          // Plays /XX/017.wav, then loop-repeats menu
+  STATE_PLAY_DISCONNECT_MESSAGE,   // Plays exit audio and hangs up
   STATE_HANGUP,
   STATE_CALLBACK_DIALING,
   STATE_COLLECTING_PRODUCT_NO,
@@ -528,7 +629,10 @@ enum CallState {
   STATE_VALIDATING_SECOND_CALL,
   STATE_ENDED,
   STATE_ACTIVE_CALL,
-  STATE_COLLECTING_DTMF
+  STATE_COLLECTING_DTMF,
+  STATE_PLAY_SELECTION,
+  // Keep legacy mappings
+  STATE_RETURN_MENU
 };
 CallState currentCallState = STATE_IDLE;
 
@@ -546,6 +650,8 @@ volatile int ivrWarrantyCheckResult = 0; // 0: idle/pending, 1: active, 2: claim
 String ivrWarrantyCheckCode = "";
 volatile int ivrComplaintResult = 0; // 0: idle/pending, 1: success, 2: failed, 99: in_progress
 String ivrComplaintTicket = "";
+volatile int ivrInstallationResult = 0; // 0: idle/pending, 1: success, 2: failed, 99: in_progress
+String ivrInstallationTicket = "";
 
 struct WarrantyTaskData {
   String productCode;
@@ -584,12 +690,55 @@ int currentAudioTrack = 0;
 int currentAudioFolder = 0;
 unsigned long lastActivityTime = 0;
 
+// Variables for user's customized 01/001 menu flow
+int playCount01001 = 0;
+bool initialMenuPhase = false;
+unsigned long pending01002DelayStart = 0;
+bool pending01002Play = false;
+
 // [OTA] Firmware URL — stored in NVS so it survives reboots.
 String otaFirmwareUrl = "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/firmware.bin";      // Default raw binary URL
 String otaDescriptorUrl = "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/version.json";  // Default JSON descriptor URL
 String otaStatus      = "idle";  // [OTA] idle | starting | downloading | flashing | success | failed
 bool   otaInProgress  = false;   // [OTA] Guard flag — prevents concurrent OTA attempts
 bool   otaAutoUpdate  = false;   // [OTA] Automatically check and update at boot
+String otaSource      = "github"; // [OTA] Source: "github", "google_sheets", or "google_drive"
+
+// Global lock to prevent concurrent SSL/HTTPS client usage (prevents OOM and brownout resets)
+volatile bool secureClientActive = false;
+
+bool acquireSecureClientLock(unsigned long timeoutMs) {
+  unsigned long start = millis();
+  while (secureClientActive) {
+    if (millis() - start > timeoutMs) {
+      return false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+  secureClientActive = true;
+  return true;
+}
+
+void releaseSecureClientLock() {
+  secureClientActive = false;
+}
+
+// ==================== LOCAL CUSTOMER DATABASE (SD Card) ====================
+#define MAX_LOCAL_CUSTOMERS 150
+struct CustomerRecord {
+  char phone[16];    // "+919092610415"
+  char name[32];     // "Ravi Kumar"
+  char product[32];  // "V-Varma Pro"
+  char serial[16];   // "VV-001234"
+};
+CustomerRecord* localCustomers = nullptr;
+int localCustomerCount = 0;
+unsigned long lastPeriodicSyncMillis = 0;
+unsigned long syncIntervalMs = 1800000;  // 30 minutes default
+bool periodicSyncRunning = false;
+volatile bool manualSyncRunning = false;
+String lastSyncTimeStr = "Never";
+int localDbSyncErrors = 0;
 
 // SIM800L Status variables
 bool gsmModuleConnected = false;
@@ -602,7 +751,7 @@ String gsmImei = "";
 bool callWaitingActivated = false;
 int sheetsSyncCount = 0;
 int sheetsSyncErrors = 0;
-String sheetsLastSyncTime = "—";
+String sheetsLastSyncTime = "--"; // ASCII only — avoid multi-byte UTF-8 in JSON strings
 
 // SMS & LED Indicator global variables
 bool receivingSmsBody = false;
@@ -698,15 +847,49 @@ void processIvrDtmf(String key);
 void ensureIvrMenuJson();
 void verifyIvrWarranty(String productCode);
 void processWarrantyResult(String code, int result);
-void startComplaintRegistration();
+void startComplaintRegistration(String warrantyId);
+void startInstallationRegistration(String warrantyId);
 void startAgentConnection();
 void verifyIvrWarrantyTask(void *pvParameters);
 void registerComplaintTask(void *pvParameters);
+void registerInstallationTask(void *pvParameters);
 void updateSDCache();
 bool checkAudioFinished(unsigned long maxDurationMs = 60000);
 String getDFPlayerCompatiblePath(String originalFilename);
-void processNewIvrDtmf(char key);
 String getStateName(CallState state);
+
+// Local DB forward declarations
+void loadCustomersFromSD();
+void saveCustomersToSD(const String& jsonArray);
+bool isCustomerRegisteredLocal(const String& phone);
+void periodicSyncTask(void* pvParameters);
+void startPeriodicSync();
+void triggerManualSync();
+static void manualSyncTaskFn(void* pvParameters); // Named task fn for manual sync
+void sdDbFlushOfflineQueue(WiFiClientSecure *client, HTTPClient *http);
+void sdDbFlushInstallations(WiFiClientSecure *client, HTTPClient *http);
+void sdDbFlushNewCustomers(WiFiClientSecure *client, HTTPClient *http);
+// SD-first local database functions
+void sdDbEnsureDirectories();
+void sdDbAppendCallLog(const String& timeStr, const String& phone, const String& dtmf, const String& status, const String& direction);
+void sdDbAppendSmsLog(const String& timeStr, const String& phone, const String& msg, const String& direction, const String& status);
+void sdDbQueueComplaint(const String& phone, const String& warrantyId, const String& issue);
+void sdDbQueueInstallation(const String& phone, const String& warrantyId);
+bool sdDbCheckWarrantyCache(const String& code, String& outStatus);
+void sdDbCacheWarranty(const String& code, const String& status);
+void sdDbFlushOfflineQueue();
+void sdDbFlushInstallations();
+void sdDbFlushCallLogs(WiFiClientSecure *client, HTTPClient *http);
+void sdDbFlushSmsLogs(WiFiClientSecure *client, HTTPClient *http);
+void saveMobilesToCsv(const String& payload);
+bool saveVarmaDataStream(HTTPClient* http, int len);
+bool syncMobilesList(WiFiClientSecure *client, HTTPClient *http);
+bool syncVarmaDataPayload(WiFiClientSecure *client, HTTPClient *http);
+void sdDbQueueNewCustomer(const String& phone, const String& name, const String& product, const String& serial);
+void sdDbFlushNewCustomers();
+bool syncAllSheets(WiFiClientSecure *client, HTTPClient *http);
+bool downloadSheetToCsv(WiFiClientSecure *client, HTTPClient *http, const String& sheetName);
+bool sdDbCheckWarrantyLocal(const String& code, String& outStatus);
 
 
 
@@ -714,23 +897,29 @@ String getStateName(CallState state);
 void webLog(String msg) {
   if (logMutex != NULL) {
     if (xSemaphoreTake(logMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-      if (!serialUploadActive) {
+#if ENABLE_DEBUG_SERIAL
+      if (!serialUploadActive && Serial && Serial.availableForWrite() > 64) {
         Serial.println("[LOG] " + msg);
       }
+#endif
       webSerialLog += msg + "\n";
       if (webSerialLog.length() > 2048) {
         webSerialLog = webSerialLog.substring(1024); // Truncate old logs if buffer exceeds 2KB
       }
       xSemaphoreGive(logMutex);
     } else {
-      if (!serialUploadActive) {
+#if ENABLE_DEBUG_SERIAL
+      if (!serialUploadActive && Serial && Serial.availableForWrite() > 64) {
         Serial.println("[LOG_TIMEOUT] " + msg);
       }
+#endif
     }
   } else {
-    if (!serialUploadActive) {
+#if ENABLE_DEBUG_SERIAL
+    if (!serialUploadActive && Serial && Serial.availableForWrite() > 64) {
       Serial.println("[LOG_NO_MUTEX] " + msg);
     }
+#endif
   }
 }
 
@@ -811,10 +1000,8 @@ void mDNS_begin() {
     return;
   }
 
-  // Delay slightly to let the LwIP stack fully bind and configure the routing table
-  webLog("[mDNS] Delaying 2s to stabilize LwIP network interface...");
-  delay(2000);
-  staIp = WiFi.localIP(); // Re-read IP after stabilization
+  // Re-read IP (already valid since we checked WL_CONNECTED above)
+  staIp = WiFi.localIP();
 
   MDNS.end();
   delay(200); // Allow mdns stack to fully teardown
@@ -885,6 +1072,1152 @@ void factoryReset() {
   ESP.restart();
 }
 
+// ==================== SD CARD LOCAL DATABASE ====================
+// Directory layout on SD card:
+//   /db/call_log.csv       — every call event (survives reboots, offline-safe)
+//   /db/sms_log.csv        — every SMS sent/received
+//   /db/complaints.csv     — offline complaint queue (flushed to GSheets when WiFi available)
+//   /db/warranty_cache.csv — warranty lookup result cache (avoid repeat HTTP calls)
+//   /customers.csv         — registered mobile list (refreshed by periodic sync)
+//   /varma_data.json       — last full GSheets payload backup
+
+void sdDbEnsureDirectories() {
+  if (!sdCardFound || !myFS) return;
+  if (!myFS->exists("/db")) {
+    myFS->mkdir("/db");
+    webLog("[SD-DB] Created /db directory.");
+  }
+}
+
+void sdDbAppendCallLog(const String& timeStr, const String& phone, const String& dtmf, const String& status, const String& direction) {
+  if (!sdCardFound || !myFS || !sdTake()) return;
+  sdDbEnsureDirectories();
+  File f = myFS->open("/db/call_log.csv", FILE_APPEND);
+  if (!f) { webLog("[SD-DB] Failed to open /db/call_log.csv for append."); sdGive(); return; }
+  // Format: timeStr,phone,dtmf,status,direction
+  String line = timeStr + "," + phone + "," + dtmf + "," + status + "," + direction;
+  f.println(line);
+  f.close();
+  lastSdActivityMillis = millis();
+  sdGive();
+  webLog("[SD-DB] Call logged to SD: " + line);
+}
+
+void sdDbAppendSmsLog(const String& timeStr, const String& phone, const String& msg, const String& direction, const String& status) {
+  if (!sdCardFound || !myFS || !sdTake()) return;
+  sdDbEnsureDirectories();
+  File f = myFS->open("/db/sms_log.csv", FILE_APPEND);
+  if (!f) { webLog("[SD-DB] Failed to open /db/sms_log.csv for append."); sdGive(); return; }
+  // Sanitize message: replace commas and newlines to keep CSV clean
+  String cleanMsg = msg;
+  cleanMsg.replace(",", ";");
+  cleanMsg.replace("\n", " ");
+  cleanMsg.replace("\r", "");
+  String line = timeStr + "," + phone + "," + cleanMsg + "," + direction + "," + status;
+  f.println(line);
+  f.close();
+  lastSdActivityMillis = millis();
+  sdGive();
+  webLog("[SD-DB] SMS logged to SD: " + phone);
+}
+
+// Append a complaint to the offline queue on SD.
+// The periodic sync task flushes this queue to GSheets.
+void sdDbQueueComplaint(const String& phone, const String& warrantyId, const String& issue) {
+  if (!sdCardFound || !myFS || !sdTake()) return;
+  sdDbEnsureDirectories();
+  File f = myFS->open("/db/offline_complaints_queue.csv", FILE_APPEND);
+  if (!f) { webLog("[SD-DB] Failed to open /db/offline_complaints_queue.csv for append."); sdGive(); return; }
+  String line = phone + "," + warrantyId + "," + issue;
+  f.println(line);
+  f.close();
+  lastSdActivityMillis = millis();
+  sdGive();
+  webLog("[SD-DB] Complaint queued to SD: " + line);
+}
+
+void sdDbQueueInstallation(const String& phone, const String& warrantyId) {
+  if (!sdCardFound || !myFS || !sdTake()) return;
+  sdDbEnsureDirectories();
+  File f = myFS->open("/db/offline_installations_queue.csv", FILE_APPEND);
+  if (!f) { webLog("[SD-DB] Failed to open /db/offline_installations_queue.csv for append."); sdGive(); return; }
+  String line = phone + "," + warrantyId;
+  f.println(line);
+  f.close();
+  lastSdActivityMillis = millis();
+  sdGive();
+  webLog("[SD-DB] Installation queued to SD: " + line);
+}
+
+// Check if a warranty code is cached on SD. Returns true if found.
+bool sdDbCheckWarrantyCache(const String& code, String& outStatus) {
+  if (!sdCardFound || !myFS || !sdTake()) return false;
+  if (!myFS->exists("/db/warranty_cache.csv")) { sdGive(); return false; }
+  File f = myFS->open("/db/warranty_cache.csv", FILE_READ);
+  if (!f) { sdGive(); return false; }
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() == 0) continue;
+    int comma = line.indexOf(',');
+    if (comma == -1) continue;
+    String cachedCode = line.substring(0, comma);
+    String cachedStatus = line.substring(comma + 1);
+    if (cachedCode == code) {
+      outStatus = cachedStatus;
+      f.close();
+      sdGive();
+      webLog("[SD-DB] Warranty cache HIT: " + code + " -> " + outStatus);
+      return true;
+    }
+  }
+  f.close();
+  sdGive();
+  return false;
+}
+
+// Store a warranty verification result in the SD cache.
+void sdDbCacheWarranty(const String& code, const String& status) {
+  if (!sdCardFound || !myFS || !sdTake()) return;
+  sdDbEnsureDirectories();
+  File f = myFS->open("/db/warranty_cache.csv", FILE_APPEND);
+  if (!f) { webLog("[SD-DB] Failed to open /db/warranty_cache.csv for append."); sdGive(); return; }
+  f.println(code + "," + status);
+  f.close();
+  lastSdActivityMillis = millis();
+  sdGive();
+  webLog("[SD-DB] Warranty cached to SD: " + code + " -> " + status);
+}
+
+// Local DB warranty check (from downloaded Warranty_Register sheet)
+bool sdDbCheckWarrantyLocal(const String& code, String& outStatus) {
+  if (!sdCardFound || !myFS || !sdTake()) return false;
+  if (!myFS->exists("/db/warranty_register.csv")) { sdGive(); return false; }
+  File f = myFS->open("/db/warranty_register.csv", FILE_READ);
+  if (!f) { sdGive(); return false; }
+  
+  String cleanCode = code;
+  cleanCode.trim();
+  cleanCode.toUpperCase();
+  
+  // Skip header line
+  if (f.available()) {
+    f.readStringUntil('\n');
+  }
+  
+  bool found = false;
+  while (f.available() && !found) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() == 0) continue;
+    
+    // Parse CSV columns, handling potential quotes
+    String cols[18];
+    int colIdx = 0;
+    int searchIdx = 0;
+    while (searchIdx < line.length() && colIdx < 18) {
+      String cell = "";
+      if (line.charAt(searchIdx) == '"') {
+        searchIdx++;
+        while (searchIdx < line.length()) {
+          if (line.charAt(searchIdx) == '"') {
+            if (searchIdx + 1 < line.length() && line.charAt(searchIdx + 1) == '"') {
+              cell += '"';
+              searchIdx += 2;
+            } else {
+              searchIdx++;
+              break;
+            }
+          } else {
+            cell += line.charAt(searchIdx);
+            searchIdx++;
+          }
+        }
+        if (searchIdx < line.length() && line.charAt(searchIdx) == ',') {
+          searchIdx++;
+        }
+      } else {
+        int nextComma = line.indexOf(',', searchIdx);
+        if (nextComma == -1) {
+          cell = line.substring(searchIdx);
+          searchIdx = line.length();
+        } else {
+          cell = line.substring(searchIdx, nextComma);
+          searchIdx = nextComma + 1;
+        }
+      }
+      cell.trim();
+      cols[colIdx++] = cell;
+    }
+    
+    if (colIdx > 2) {
+      String wId = cols[1];
+      String pNum = cols[2];
+      wId.toUpperCase();
+      pNum.toUpperCase();
+      
+      if ((wId.length() > 0 && wId == cleanCode) || 
+          (pNum.length() > 0 && pNum == cleanCode)) {
+        outStatus = (colIdx > 15) ? cols[15] : "active"; // Default to active if status column is missing
+        found = true;
+      }
+    }
+  }
+  
+  f.close();
+  sdGive();
+  return found;
+}
+
+// Flush offline complaint queue from SD -> GSheets.
+// Called from periodicSyncTask when WiFi is available.
+void sdDbFlushOfflineQueue(WiFiClientSecure *client, HTTPClient *http) {
+  if (!sdCardFound || !myFS || !sdTake()) return;
+  if (!myFS->exists("/db/offline_complaints_queue.csv")) { sdGive(); return; }
+  if (WiFi.status() != WL_CONNECTED || scriptId.length() == 0) { sdGive(); return; }
+
+  File f = myFS->open("/db/offline_complaints_queue.csv", FILE_READ);
+  if (!f) { sdGive(); return; }
+
+  // Read all pending complaints
+  std::vector<String> lines;
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() > 0) lines.push_back(line);
+  }
+  f.close();
+
+  if (lines.empty()) { sdGive(); return; }
+
+  webLog("[SD-DB] Flushing " + String(lines.size()) + " offline complaint(s) to GSheets...");
+  int flushed = 0;
+
+  for (const String& line : lines) {
+    int c1 = line.indexOf(',');
+    int c2 = line.indexOf(',', c1 + 1);
+    if (c1 == -1) continue;
+    String phone = line.substring(0, c1);
+    String warrantyId = (c2 != -1) ? line.substring(c1 + 1, c2) : line.substring(c1 + 1);
+    String issue = (c2 != -1) ? line.substring(c2 + 1) : "IVR_Auto_Register";
+
+    bool success = false;
+    String encPhone = phone; encPhone.replace("+", "%2B");
+    String encWarr  = warrantyId; encWarr.replace("+", "%2B");
+    String url = "https://script.google.com/macros/s/" + scriptId +
+                 "/exec?action=registerComplaint&warrantyId=" + encWarr +
+                 "&phone=" + encPhone + "&issue=" + issue + "&sheetId=" + sheetId;
+    if (http->begin(*client, url)) {
+      http->setTimeout(25000);
+      http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+      int code = http->GET();
+      if (code == HTTP_CODE_OK || code == HTTP_CODE_MOVED_PERMANENTLY) {
+        webLog("[SD-DB] Flushed complaint for: " + phone);
+        success = true;
+        flushed++;
+      } else {
+        webLog("[SD-DB] Flush HTTP error: " + String(code));
+      }
+      http->end();
+    }
+
+    if (!success) break; // Stop on first failure, retry next sync cycle
+    vTaskDelay(pdMS_TO_TICKS(500)); // Small gap between requests
+  }
+
+  // Remove flushed records: rewrite file with unflushed lines only
+  if (flushed > 0) {
+    File wf = myFS->open("/db/offline_complaints_queue.csv", FILE_WRITE);
+    if (wf) {
+      for (int i = flushed; i < (int)lines.size(); i++) {
+        wf.println(lines[i]);
+      }
+      wf.close();
+      webLog("[SD-DB] Offline queue: " + String(flushed) + " flushed, " +
+             String((int)lines.size() - flushed) + " remaining.");
+    }
+  }
+  sdGive();
+}
+
+void sdDbFlushInstallations(WiFiClientSecure *client, HTTPClient *http) {
+  if (!sdCardFound || !myFS || !sdTake()) return;
+  if (!myFS->exists("/db/offline_installations_queue.csv")) { sdGive(); return; }
+  if (WiFi.status() != WL_CONNECTED || scriptId.length() == 0) { sdGive(); return; }
+
+  File f = myFS->open("/db/offline_installations_queue.csv", FILE_READ);
+  if (!f) { sdGive(); return; }
+
+  std::vector<String> lines;
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() > 0) lines.push_back(line);
+  }
+  f.close();
+
+  if (lines.empty()) { sdGive(); return; }
+
+  webLog("[SD-DB] Flushing " + String(lines.size()) + " offline installation(s) to GSheets...");
+  int flushed = 0;
+
+  for (const String& line : lines) {
+    int c1 = line.indexOf(',');
+    if (c1 == -1) continue;
+    String phone = line.substring(0, c1);
+    String warrantyId = line.substring(c1 + 1);
+
+    bool success = false;
+    String encPhone = phone; encPhone.replace("+", "%2B");
+    String encWarr  = warrantyId; encWarr.replace("+", "%2B");
+    String url = "https://script.google.com/macros/s/" + scriptId +
+                 "/exec?action=registerInstallation&warrantyId=" + encWarr +
+                 "&phone=" + encPhone + "&sheetId=" + sheetId;
+    if (http->begin(*client, url)) {
+      http->setTimeout(25000);
+      http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+      int code = http->GET();
+      if (code == HTTP_CODE_OK || code == HTTP_CODE_MOVED_PERMANENTLY) {
+        webLog("[SD-DB] Flushed installation for: " + phone);
+        success = true;
+        flushed++;
+      } else {
+        webLog("[SD-DB] Installation Flush HTTP error: " + String(code));
+      }
+      http->end();
+    }
+
+    if (!success) break;
+    vTaskDelay(pdMS_TO_TICKS(500));
+  }
+
+  if (flushed > 0) {
+    File wf = myFS->open("/db/offline_installations_queue.csv", FILE_WRITE);
+    if (wf) {
+      for (int i = flushed; i < (int)lines.size(); i++) {
+        wf.println(lines[i]);
+      }
+      wf.close();
+      webLog("[SD-DB] Offline installations queue: " + String(flushed) + " flushed, " +
+             String((int)lines.size() - flushed) + " remaining.");
+    }
+  }
+  sdGive();
+}
+
+void sdDbQueueNewCustomer(const String& phone, const String& name, const String& product, const String& serial) {
+  if (!sdCardFound || !myFS || !sdTake()) return;
+  sdDbEnsureDirectories();
+  
+  // 1. Queue for background cloud sync
+  File fQueue = myFS->open("/db/offline_new_customers_queue.csv", FILE_APPEND);
+  if (fQueue) {
+    String line = phone + "," + name + "," + product + "," + serial;
+    fQueue.println(line);
+    fQueue.close();
+    webLog("[SD-DB] New customer queued to offline sync queue: " + line);
+  } else {
+    webLog("[SD-DB] Failed to open /db/offline_new_customers_queue.csv for append.");
+  }
+
+  // 2. Append directly to local active database so validation is immediate
+  String activeDbPath = "/db/ivr_registered_users.csv";
+  if (!myFS->exists(activeDbPath)) {
+    activeDbPath = "/customers.csv";
+  }
+  
+  File fActive = myFS->open(activeDbPath, FILE_APPEND);
+  if (fActive) {
+    if (fActive.size() == 0) {
+      fActive.println("Phone,Name,Product,Serial");
+    }
+    String line = phone + "," + name + "," + product + "," + serial;
+    fActive.println(line);
+    fActive.close();
+    webLog("[SD-DB] New customer appended directly to active local database: " + line);
+  } else {
+    webLog("[SD-DB] Failed to append to active local database.");
+  }
+  
+  lastSdActivityMillis = millis();
+  sdGive();
+
+  // 3. Reload customers into RAM array immediately
+  loadCustomersFromSD();
+}
+
+void sdDbFlushNewCustomers(WiFiClientSecure *client, HTTPClient *http) {
+  if (!sdCardFound || !myFS || !sdTake()) return;
+  if (!myFS->exists("/db/offline_new_customers_queue.csv")) { sdGive(); return; }
+  if (WiFi.status() != WL_CONNECTED || scriptId.length() == 0) { sdGive(); return; }
+
+  File f = myFS->open("/db/offline_new_customers_queue.csv", FILE_READ);
+  if (!f) { sdGive(); return; }
+
+  // Read all pending new customers
+  std::vector<String> lines;
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() > 0) lines.push_back(line);
+  }
+  f.close();
+
+  if (lines.empty()) { sdGive(); return; }
+
+  webLog("[SD-DB] Flushing " + String(lines.size()) + " offline new customer(s) to GSheets...");
+  int flushed = 0;
+
+  for (const String& line : lines) {
+    int c1 = line.indexOf(',');
+    int c2 = line.indexOf(',', c1 + 1);
+    int c3 = line.indexOf(',', c2 + 1);
+    if (c1 == -1 || c2 == -1) continue;
+    String phone = line.substring(0, c1);
+    String name = line.substring(c1 + 1, c2);
+    String product = (c3 != -1) ? line.substring(c2 + 1, c3) : line.substring(c2 + 1);
+    String serial = (c3 != -1) ? line.substring(c3 + 1) : "";
+
+    bool success = false;
+    String encPhone = phone; encPhone.replace("+", "%2B");
+    String encName  = name; encName.replace(" ", "%20");
+    String encProd  = product; encProd.replace(" ", "%20");
+    String encSer   = serial; encSer.replace(" ", "%20");
+    String url = "https://script.google.com/macros/s/" + scriptId +
+                 "/exec?action=registerCustomer&phone=" + encPhone +
+                 "&name=" + encName + "&product=" + encProd +
+                 "&serial=" + encSer + "&sheetId=" + sheetId;
+    if (http->begin(*client, url)) {
+      http->setTimeout(25000);
+      http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+      int code = http->GET();
+      if (code == HTTP_CODE_OK || code == HTTP_CODE_MOVED_PERMANENTLY) {
+        webLog("[SD-DB] Flushed new customer for: " + name);
+        success = true;
+        flushed++;
+      } else {
+        webLog("[SD-DB] Customer Flush HTTP error: " + String(code));
+      }
+      http->end();
+    }
+
+    if (!success) break; // Stop on first failure, retry next sync cycle
+    vTaskDelay(pdMS_TO_TICKS(500)); // Small gap between requests
+  }
+
+  // Remove flushed records: rewrite file with unflushed lines only
+  if (flushed > 0) {
+    File wf = myFS->open("/db/offline_new_customers_queue.csv", FILE_WRITE);
+    if (wf) {
+      for (int i = flushed; i < (int)lines.size(); i++) {
+        wf.println(lines[i]);
+      }
+      wf.close();
+      webLog("[SD-DB] New Customer offline queue: " + String(flushed) + " flushed, " +
+             String((int)lines.size() - flushed) + " remaining.");
+    }
+  }
+  sdGive();
+}
+
+// Flush call log from SD -> GSheets (IVR_Call_Log sheet).
+// Each line in /db/call_log.csv: timeStr,phone,dtmf,status,direction
+void sdDbFlushCallLogs(WiFiClientSecure *client, HTTPClient *http) {
+  if (!sdCardFound || !myFS || !sdTake()) return;
+  if (!myFS->exists("/db/call_log.csv")) { sdGive(); return; }
+  if (WiFi.status() != WL_CONNECTED || scriptId.length() == 0) { sdGive(); return; }
+
+  File f = myFS->open("/db/call_log.csv", FILE_READ);
+  if (!f) { sdGive(); return; }
+
+  std::vector<String> lines;
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() > 0) lines.push_back(line);
+  }
+  f.close();
+  sdGive();
+
+  if (lines.empty()) return;
+
+  webLog("[SD-DB] Flushing " + String(lines.size()) + " call log(s) to GSheets...");
+  int flushed = 0;
+
+  for (const String& line : lines) {
+    // Parse CSV: timeStr,phone,dtmf,status,direction
+    String cols[5] = {"","","","",""};
+    int idx = 0, start = 0;
+    for (int i = 0; i <= (int)line.length() && idx < 5; i++) {
+      if (i == (int)line.length() || line.charAt(i) == ',') {
+        cols[idx++] = line.substring(start, i);
+        start = i + 1;
+      }
+    }
+    String encTime  = cols[0]; encTime.replace(" ", "%20");
+    String encPhone = cols[1]; encPhone.replace("+", "%2B");
+    String encDtmf  = cols[2]; encDtmf.replace(" ", "%20");
+    String encStat  = cols[3]; encStat.replace(" ", "%20");
+    String encDir   = cols[4]; encDir.replace(" ", "%20");
+    String url = "https://script.google.com/macros/s/" + scriptId +
+                 "/exec?action=appendCallLog&timeStr=" + encTime +
+                 "&phone=" + encPhone + "&dtmf=" + encDtmf +
+                 "&status=" + encStat + "&direction=" + encDir +
+                 "&sheetId=" + sheetId;
+    bool success = false;
+    if (http->begin(*client, url)) {
+      http->setTimeout(20000);
+      http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+      int code = http->GET();
+      if (code == HTTP_CODE_OK || code == HTTP_CODE_MOVED_PERMANENTLY) {
+        success = true;
+        flushed++;
+      } else {
+        webLog("[SD-DB] CallLog flush HTTP error: " + String(code));
+      }
+      http->end();
+    }
+    if (!success) break;
+    vTaskDelay(pdMS_TO_TICKS(300));
+  }
+
+  // Rewrite file keeping only unflushed lines
+  if (flushed > 0 && sdTake()) {
+    File wf = myFS->open("/db/call_log.csv", FILE_WRITE);
+    if (wf) {
+      for (int i = flushed; i < (int)lines.size(); i++) wf.println(lines[i]);
+      wf.close();
+    }
+    sdGive();
+    webLog("[SD-DB] Call log: " + String(flushed) + " flushed, " +
+           String((int)lines.size() - flushed) + " remaining.");
+  }
+}
+
+// Flush SMS log from SD -> GSheets (IVR_SMS_Log sheet).
+// Each line in /db/sms_log.csv: timeStr,phone,msg,direction,status
+void sdDbFlushSmsLogs(WiFiClientSecure *client, HTTPClient *http) {
+  if (!sdCardFound || !myFS || !sdTake()) return;
+  if (!myFS->exists("/db/sms_log.csv")) { sdGive(); return; }
+  if (WiFi.status() != WL_CONNECTED || scriptId.length() == 0) { sdGive(); return; }
+
+  File f = myFS->open("/db/sms_log.csv", FILE_READ);
+  if (!f) { sdGive(); return; }
+
+  std::vector<String> lines;
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() > 0) lines.push_back(line);
+  }
+  f.close();
+  sdGive();
+
+  if (lines.empty()) return;
+
+  webLog("[SD-DB] Flushing " + String(lines.size()) + " SMS log(s) to GSheets...");
+  int flushed = 0;
+
+  for (const String& line : lines) {
+    // Parse CSV: timeStr,phone,msg,direction,status
+    String cols[5] = {"","","","",""};
+    int idx = 0, start = 0;
+    for (int i = 0; i <= (int)line.length() && idx < 5; i++) {
+      if (i == (int)line.length() || line.charAt(i) == ',') {
+        cols[idx++] = line.substring(start, i);
+        start = i + 1;
+      }
+    }
+    String encTime  = cols[0]; encTime.replace(" ", "%20");
+    String encPhone = cols[1]; encPhone.replace("+", "%2B");
+    String encMsg   = cols[2]; encMsg.replace(" ", "%20"); encMsg.replace("+", "%2B");
+    String encDir   = cols[3]; encDir.replace(" ", "%20");
+    String encStat  = cols[4]; encStat.replace(" ", "%20");
+    String url = "https://script.google.com/macros/s/" + scriptId +
+                 "/exec?action=appendSmsLog&timeStr=" + encTime +
+                 "&phone=" + encPhone + "&message=" + encMsg +
+                 "&direction=" + encDir + "&status=" + encStat +
+                 "&sheetId=" + sheetId;
+    bool success = false;
+    if (http->begin(*client, url)) {
+      http->setTimeout(20000);
+      http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+      int code = http->GET();
+      if (code == HTTP_CODE_OK || code == HTTP_CODE_MOVED_PERMANENTLY) {
+        success = true;
+        flushed++;
+      } else {
+        webLog("[SD-DB] SmsLog flush HTTP error: " + String(code));
+      }
+      http->end();
+    }
+    if (!success) break;
+    vTaskDelay(pdMS_TO_TICKS(300));
+  }
+
+  // Rewrite file keeping only unflushed lines
+  if (flushed > 0 && sdTake()) {
+    File wf = myFS->open("/db/sms_log.csv", FILE_WRITE);
+    if (wf) {
+      for (int i = flushed; i < (int)lines.size(); i++) wf.println(lines[i]);
+      wf.close();
+    }
+    sdGive();
+    webLog("[SD-DB] SMS log: " + String(flushed) + " flushed, " +
+           String((int)lines.size() - flushed) + " remaining.");
+  }
+}
+
+
+void loadCustomersFromSD() {
+  if (!sdCardFound || !myFS || !sdTake()) {
+    webLog("[LocalDB] SD card not available or busy. Skipping customer load.");
+    return;
+  }
+  
+  String path = "/customers.csv";
+  if (myFS->exists("/db/ivr_registered_users.csv")) {
+    path = "/db/ivr_registered_users.csv";
+  } else if (!myFS->exists("/customers.csv")) {
+    webLog("[LocalDB] Registered users file not found on SD card.");
+    localCustomerCount = 0;
+    sdGive();
+    return;
+  }
+  
+  File f = myFS->open(path, FILE_READ);
+  if (!f) {
+    webLog("[LocalDB] Failed to open " + path + " for reading.");
+    sdGive();
+    return;
+  }
+  
+  // Read first line to check headers
+  bool isConsolidatedSheet = false;
+  if (f.available()) {
+    String header = f.readStringUntil('\n');
+    if (header.indexOf("Phone Number") != -1) {
+      isConsolidatedSheet = true;
+    } else {
+      // Rewind if no header
+      f.seek(0);
+    }
+  }
+  
+  // Allocate array if not yet allocated
+  if (localCustomers == nullptr) {
+    localCustomers = (CustomerRecord*)malloc(sizeof(CustomerRecord) * MAX_LOCAL_CUSTOMERS);
+    if (localCustomers == nullptr) {
+      webLog("[LocalDB] CRITICAL: Failed to allocate memory for customer DB.");
+      f.close();
+      sdGive();
+      return;
+    }
+  }
+  
+  int count = 0;
+  while (f.available() && count < MAX_LOCAL_CUSTOMERS) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() == 0) continue;
+    
+    // Parse CSV line columns, handling potential quotes
+    String cols[7];
+    int colIdx = 0;
+    int searchIdx = 0;
+    while (searchIdx < line.length() && colIdx < 7) {
+      String cell = "";
+      if (line.charAt(searchIdx) == '"') {
+        searchIdx++;
+        while (searchIdx < line.length()) {
+          if (line.charAt(searchIdx) == '"') {
+            if (searchIdx + 1 < line.length() && line.charAt(searchIdx + 1) == '"') {
+              cell += '"';
+              searchIdx += 2;
+            } else {
+              searchIdx++;
+              break;
+            }
+          } else {
+            cell += line.charAt(searchIdx);
+            searchIdx++;
+          }
+        }
+        if (searchIdx < line.length() && line.charAt(searchIdx) == ',') {
+          searchIdx++;
+        }
+      } else {
+        int nextComma = line.indexOf(',', searchIdx);
+        if (nextComma == -1) {
+          cell = line.substring(searchIdx);
+          searchIdx = line.length();
+        } else {
+          cell = line.substring(searchIdx, nextComma);
+          searchIdx = nextComma + 1;
+        }
+      }
+      cell.trim();
+      cols[colIdx++] = cell;
+    }
+    
+    String phone = "";
+    String name = "";
+    String product = "";
+    String serial = "";
+    
+    if (isConsolidatedSheet) {
+      // 'Phone Number', 'Name', 'Type', 'Product/Details', 'Status', 'Address', 'Last Sync'
+      phone = cols[0];
+      name = cols[1];
+      product = cols[3]; // Product/Details
+      serial = cols[2];  // Type (Dealer, Tech, Customer)
+    } else {
+      // Standard customers.csv: phone,name,product,serial
+      phone = cols[0];
+      name = cols[1];
+      product = cols[2];
+      serial = cols[3];
+    }
+    
+    phone.trim();
+    name.trim();
+    product.trim();
+    serial.trim();
+    
+    if (phone.length() == 0) continue;
+    
+    // Normalize phone number prefix
+    if (!phone.startsWith("+")) {
+      if (phone.length() == 10) phone = "+91" + phone;
+      else if (phone.length() == 12 && phone.startsWith("91")) phone = "+" + phone;
+    }
+    
+    strncpy(localCustomers[count].phone, phone.c_str(), sizeof(localCustomers[count].phone) - 1);
+    localCustomers[count].phone[sizeof(localCustomers[count].phone) - 1] = '\0';
+    strncpy(localCustomers[count].name, name.c_str(), sizeof(localCustomers[count].name) - 1);
+    localCustomers[count].name[sizeof(localCustomers[count].name) - 1] = '\0';
+    strncpy(localCustomers[count].product, product.c_str(), sizeof(localCustomers[count].product) - 1);
+    localCustomers[count].product[sizeof(localCustomers[count].product) - 1] = '\0';
+    strncpy(localCustomers[count].serial, serial.c_str(), sizeof(localCustomers[count].serial) - 1);
+    localCustomers[count].serial[sizeof(localCustomers[count].serial) - 1] = '\0';
+    
+    count++;
+    yield(); // Prevent task watchdog starvation
+  }
+  f.close();
+  
+  localCustomerCount = count;
+  
+  // Sort by phone for binary search (simple insertion sort — runs once at boot / sync)
+  for (int i = 1; i < localCustomerCount; i++) {
+    CustomerRecord temp = localCustomers[i];
+    int j = i - 1;
+    while (j >= 0 && strcmp(localCustomers[j].phone, temp.phone) > 0) {
+      localCustomers[j + 1] = localCustomers[j];
+      j--;
+    }
+    localCustomers[j + 1] = temp;
+  }
+  
+  webLog("[LocalDB] Loaded " + String(localCustomerCount) + " customers from " + path);
+  sdGive();
+}
+
+void saveMobilesToCsv(const String& payload) {
+  if (!sdCardFound || !myFS) return;
+  if (!sdTake()) return;
+  DynamicJsonDocument doc(49152);
+  DeserializationError err = deserializeJson(doc, payload);
+  if (err) {
+    webLog("[LocalDB] Parse error for mobiles CSV: " + String(err.c_str()));
+    sdGive();
+    return;
+  }
+  JsonArray arr = doc.as<JsonArray>();
+  if (!arr.isNull()) {
+    File cf = myFS->open("/customers.csv", "w");
+    if (cf) {
+      int written = 0;
+      for (JsonObject obj : arr) {
+        String phone = String(obj["Phone"] | obj["Mobile"] | "");
+        String name = String(obj["Name"] | "");
+        String product = String(obj["Product"] | "");
+        String serial = String(obj["Serial"] | "");
+        
+        phone.trim();
+        if (phone.length() == 0) continue;
+        
+        // Normalize
+        if (!phone.startsWith("+")) {
+          if (phone.length() == 10) phone = "+91" + phone;
+          else if (phone.length() == 12 && phone.startsWith("91")) phone = "+" + phone;
+        }
+        
+        cf.println(phone + "," + name + "," + product + "," + serial);
+        written++;
+        yield(); // Prevent task watchdog starvation
+      }
+      cf.close();
+      sdGive();
+      webLog("[LocalDB] Saved " + String(written) + " customers to /customers.csv");
+      loadCustomersFromSD();
+    } else {
+      sdGive();
+      webLog("[LocalDB] Failed to open /customers.csv for writing.");
+      localDbSyncErrors++;
+    }
+  } else {
+    sdGive();
+    webLog("[LocalDB] mobiles array not found in sync payload.");
+  }
+}
+
+bool saveVarmaDataStream(HTTPClient* http, int len) {
+  if (!sdTake()) return false;
+  File f = myFS->open("/varma_data.json", "w");
+  if (!f) {
+    webLog("[LocalDB] Failed to open /varma_data.json for streaming.");
+    sdGive();
+    return false;
+  }
+  
+  // writeToStream automatically decodes HTTP chunked transfer encoding and writes directly to file
+  int written = http->writeToStream(&f);
+  f.close();
+  sdGive();
+  
+  if (written >= 0) {
+    webLog("[LocalDB] Streamed " + String(written) + " bytes to /varma_data.json");
+    updateSDCache();
+    return true;
+  } else {
+    webLog("[LocalDB] Streaming failed, error code: " + String(written));
+    return false;
+  }
+}
+
+bool downloadSheetToCsv(WiFiClientSecure *client, HTTPClient *http, const String& sheetName) {
+  String encName = sheetName;
+  encName.replace(" ", "%20");
+  String url = "https://script.google.com/macros/s/" + scriptId + "/exec?action=getSheetCsv&sheetName=" + encName + "&sheetId=" + sheetId;
+  
+  webLog("[Sync] Downloading sheet '" + sheetName + "' as CSV...");
+  
+  if (http->begin(*client, url)) {
+    http->setTimeout(30000);
+    http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    int httpCode = http->GET();
+    if (httpCode == HTTP_CODE_OK) {
+      if (!sdTake()) return false;
+      sdDbEnsureDirectories();
+      
+      String filename = sheetName;
+      filename.toLowerCase();
+      filename.replace(" ", "_");
+      String filepath = "/db/" + filename + ".csv";
+      
+      File f = myFS->open(filepath, "w");
+      if (f) {
+        int written = http->writeToStream(&f);
+        f.close();
+        sdGive();
+        if (written >= 0) {
+          webLog("[Sync] Saved " + String(written) + " bytes to " + filepath);
+          return true;
+        } else {
+          webLog("[Sync] Failed to write " + filepath + " stream: error " + String(written));
+        }
+      } else {
+        sdGive();
+        webLog("[Sync] Failed to open file for writing: " + filepath);
+      }
+    } else {
+      char sslErr[128] = {0};
+      client->lastError(sslErr, sizeof(sslErr));
+      webLog("[Sync] HTTP error downloading sheet '" + sheetName + "': " + String(httpCode) + " (TLS Err: " + String(sslErr) + ")");
+    }
+    http->end();
+  }
+  return false;
+}
+
+bool syncAllSheets(WiFiClientSecure *client, HTTPClient *http) {
+  bool anyOk = false;
+
+  // 1. IVR Registered Users — primary phone validation list
+  webLog("[Sync] Downloading IVR_Registered_Users...");
+  bool usersOk = downloadSheetToCsv(client, http, "IVR_Registered_Users");
+  if (usersOk) {
+    webLog("[Sync] IVR_Registered_Users updated successfully.");
+    loadCustomersFromSD();
+    anyOk = true;
+  } else {
+    webLog("[Sync] Failed to download IVR_Registered_Users.");
+  }
+  vTaskDelay(pdMS_TO_TICKS(500));
+
+  // 2. Warranty Register — enables fast offline warranty lookups
+  webLog("[Sync] Downloading Warranty_Register...");
+  bool warrantyOk = downloadSheetToCsv(client, http, "Warranty_Register");
+  if (warrantyOk) {
+    webLog("[Sync] Warranty_Register synced to /db/warranty_register.csv");
+    anyOk = true;
+  } else {
+    webLog("[Sync] Failed to download Warranty_Register.");
+  }
+  vTaskDelay(pdMS_TO_TICKS(500));
+
+  // 3. Party List — broader customer/dealer/tech registered contact list
+  webLog("[Sync] Downloading Party_List...");
+  bool partyOk = downloadSheetToCsv(client, http, "Party_List");
+  if (partyOk) {
+    webLog("[Sync] Party_List synced to /db/party_list.csv");
+    anyOk = true;
+  } else {
+    webLog("[Sync] Failed to download Party_List.");
+  }
+
+  return anyOk; // Success if at least one sheet downloaded
+}
+
+bool syncMobilesList(WiFiClientSecure *client, HTTPClient *http) {
+  String url = "https://script.google.com/macros/s/" + scriptId + "/exec?action=get_mobiles&sheetId=" + sheetId;
+  webLog("[Sync] Syncing customers list from Sheets...");
+  if (http->begin(*client, url)) {
+    http->setTimeout(25000);
+    http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    int httpCode = http->GET();
+    if (httpCode == HTTP_CODE_OK) {
+      String payload = http->getString();
+      saveMobilesToCsv(payload);
+      http->end();
+      return true;
+    } else {
+      char sslErr[128] = {0};
+      client->lastError(sslErr, sizeof(sslErr));
+      webLog("[Sync] Customers list HTTP error: " + String(httpCode) + " (TLS Err: " + String(sslErr) + ")");
+    }
+    http->end();
+  }
+  return false;
+}
+
+bool syncVarmaDataPayload(WiFiClientSecure *client, HTTPClient *http) {
+  String url = "https://script.google.com/macros/s/" + scriptId + "/exec?action=getVarmaData&sheetId=" + sheetId + "&mac=" + myMac;
+  webLog("[Sync] Syncing full dashboard data (streaming to SD)...");
+  if (http->begin(*client, url)) {
+    http->setTimeout(40000);
+    http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    int httpCode = http->GET();
+    if (httpCode == HTTP_CODE_OK) {
+      int len = http->getSize();
+      bool ok = saveVarmaDataStream(http, len);
+      http->end();
+      return ok;
+    } else {
+      char sslErr[128] = {0};
+      client->lastError(sslErr, sizeof(sslErr));
+      webLog("[Sync] VarmaData HTTP error: " + String(httpCode) + " (TLS Err: " + String(sslErr) + ")");
+    }
+    http->end();
+  }
+  return false;
+}
+
+bool isCustomerRegisteredLocal(const String& phone) {
+  if (localCustomers == nullptr || localCustomerCount == 0) return false;
+  
+  // Normalize input phone
+  String normalized = phone;
+  normalized.trim();
+  if (!normalized.startsWith("+")) {
+    if (normalized.length() == 10) normalized = "+91" + normalized;
+    else if (normalized.length() == 12 && normalized.startsWith("91")) normalized = "+" + normalized;
+  }
+  
+  // Binary search on sorted array
+  int low = 0, high = localCustomerCount - 1;
+  while (low <= high) {
+    int mid = (low + high) / 2;
+    int cmp = strcmp(normalized.c_str(), localCustomers[mid].phone);
+    if (cmp == 0) {
+      webLog("[LocalDB] MATCH: " + normalized + " -> " + String(localCustomers[mid].name));
+      return true;
+    } else if (cmp < 0) {
+      high = mid - 1;
+    } else {
+      low = mid + 1;
+    }
+  }
+  
+  // Also try matching last 10 digits (handles +91 vs no-prefix mismatches)
+  String last10 = normalized;
+  if (last10.length() > 10) last10 = last10.substring(last10.length() - 10);
+  
+  for (int i = 0; i < localCustomerCount; i++) {
+    String dbPhone = String(localCustomers[i].phone);
+    String dbLast10 = dbPhone;
+    if (dbLast10.length() > 10) dbLast10 = dbLast10.substring(dbLast10.length() - 10);
+    if (last10 == dbLast10) {
+      webLog("[LocalDB] MATCH (last10): " + normalized + " -> " + String(localCustomers[i].name));
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+void periodicSyncTask(void* pvParameters) {
+  webLog("[PeriodicSync] Background sync task started.");
+  
+  // Wait 30 seconds at boot to let GSM module stabilize and register on network first
+  vTaskDelay(pdMS_TO_TICKS(30000));
+  
+  while (true) {
+    if (currentCallState != STATE_IDLE) {
+      vTaskDelay(pdMS_TO_TICKS(10000)); // Delay 10s if call is active to prevent SD collisions
+      continue;
+    }
+    if (WiFi.status() == WL_CONNECTED && scriptId.length() > 0 && currentSystemState != SYSTEM_WIFI_CONFIG) {
+      if (acquireSecureClientLock(10000)) { // Wait up to 10 seconds for lock
+        webLog("[PeriodicSync] Starting periodic data sync from Google Sheets...");
+        
+        WiFiClientSecure *client = new WiFiClientSecure();
+        HTTPClient *http = new HTTPClient();
+        
+        if (client != nullptr && http != nullptr) {
+          client->setInsecure();
+          
+          // ── Phase 1: Flush offline queued data from SD → Google Sheets ──
+          sdDbFlushOfflineQueue(client, http);   // Complaints queue
+          sdDbFlushNewCustomers(client, http);   // New customers queue
+          sdDbFlushInstallations(client, http);  // Installations queue
+          sdDbFlushCallLogs(client, http);        // Call log entries
+          sdDbFlushSmsLogs(client, http);         // SMS log entries
+          
+          // ── Phase 2: Pull updated Google Sheets data → SD card ──
+          bool allSheetsOk = syncAllSheets(client, http);   // Warranty, Party, Users CSVs
+          bool mobilesOk   = syncMobilesList(client, http); // Customer list JSON
+          bool dataOk      = syncVarmaDataPayload(client, http); // Full dashboard JSON
+          
+          // Update sync timestamp if ANY sub-sync succeeded (not all-or-nothing)
+          bool anySuccess = allSheetsOk || mobilesOk || dataOk;
+          if (anySuccess) {
+            unsigned long uptimeSecs = millis() / 1000;
+            unsigned long hrs = uptimeSecs / 3600;
+            unsigned long mins = (uptimeSecs % 3600) / 60;
+            char timeBuf[16];
+            snprintf(timeBuf, sizeof(timeBuf), "%02dh %02dm ago", (int)hrs, (int)mins);
+            lastSyncTimeStr = String(timeBuf);
+            lastPeriodicSyncMillis = millis();
+          }
+          
+          if (allSheetsOk && mobilesOk && dataOk) {
+            webLog("[PeriodicSync] Full sync completed. " + String(localCustomerCount) + " customers loaded.");
+          } else if (anySuccess) {
+            webLog("[PeriodicSync] Partial sync completed (sheets=" + String(allSheetsOk) +
+                   " mobiles=" + String(mobilesOk) + " data=" + String(dataOk) + ")");
+            localDbSyncErrors++;
+          } else {
+            webLog("[PeriodicSync] Full sync FAILED. Check WiFi / Script ID / GSheets.");
+            localDbSyncErrors++;
+          }
+        } else {
+          webLog("[PeriodicSync] Memory allocation failed for sync client.");
+        }
+        
+        if (client != nullptr) delete client;
+        if (http != nullptr) delete http;
+        
+        releaseSecureClientLock();
+      } else {
+        webLog("[PeriodicSync] Skipped: secure client lock busy.");
+      }
+    } else {
+      webLog("[PeriodicSync] Skipped: WiFi=" + String(WiFi.status() == WL_CONNECTED ? "OK" : "NO") +
+             " Script=" + String(scriptId.length() > 0 ? "OK" : "NO"));
+    }
+    
+    // Sleep for configured sync interval
+    vTaskDelay(pdMS_TO_TICKS(syncIntervalMs));
+  }
+}
+
+void startPeriodicSync() {
+  if (!periodicSyncRunning) {
+    periodicSyncRunning = true;
+    // Ensure /db directory exists on SD before sync starts
+    sdDbEnsureDirectories();
+    xTaskCreatePinnedToCore(periodicSyncTask, "periodic_sync", 12288, NULL, 1, NULL, 0);
+    webLog("[PeriodicSync] Periodic sync task launched.");
+  }
+}
+
+// Named task function for manual sync — FreeRTOS requires a plain C function pointer,
+// not a lambda with captures. Globals are accessed directly (safe since they're module-scope).
+static void manualSyncTaskFn(void* pvParameters) {
+  if (WiFi.status() == WL_CONNECTED && scriptId.length() > 0) {
+    if (acquireSecureClientLock(15000)) { // Wait up to 15 seconds for lock
+      WiFiClientSecure *client = new WiFiClientSecure();
+      HTTPClient *http = new HTTPClient();
+      
+      if (client != nullptr && http != nullptr) {
+        client->setInsecure();
+        
+        // ── Phase 1: Flush all offline queued data from SD → Google Sheets ──
+        webLog("[ManualSync] Phase 1: Flushing offline queues...");
+        sdDbFlushOfflineQueue(client, http);   // Complaints queue
+        sdDbFlushNewCustomers(client, http);   // New customers queue
+        sdDbFlushInstallations(client, http);  // Installations queue
+        sdDbFlushCallLogs(client, http);        // Call log entries
+        sdDbFlushSmsLogs(client, http);         // SMS log entries
+        
+        // ── Phase 2: Pull updated Google Sheets data → SD card ──
+        webLog("[ManualSync] Phase 2: Pulling sheets from Google Sheets...");
+        bool allSheetsOk = syncAllSheets(client, http);   // Warranty, Party, Users CSVs
+        bool mobilesOk   = syncMobilesList(client, http); // Customer list JSON
+        bool dataOk      = syncVarmaDataPayload(client, http); // Full dashboard JSON
+        
+        bool anySuccess = allSheetsOk || mobilesOk || dataOk;
+        if (anySuccess) {
+          unsigned long uptimeSecs = millis() / 1000;
+          unsigned long hrs = uptimeSecs / 3600;
+          unsigned long mins = (uptimeSecs % 3600) / 60;
+          char timeBuf[16];
+          snprintf(timeBuf, sizeof(timeBuf), "%02dh %02dm ago", (int)hrs, (int)mins);
+          lastSyncTimeStr = String(timeBuf);
+          lastPeriodicSyncMillis = millis();
+          webLog("[ManualSync] Sync completed (sheets=" + String(allSheetsOk) +
+                 " mobiles=" + String(mobilesOk) + " data=" + String(dataOk) + "). " +
+                 String(localCustomerCount) + " customers.");
+        } else {
+          webLog("[ManualSync] Sync failed — check WiFi / Script ID.");
+          localDbSyncErrors++;
+        }
+      }
+      if (client != nullptr) delete client;
+      if (http != nullptr) delete http;
+      
+      releaseSecureClientLock();
+    } else {
+      webLog("[ManualSync] Failed to acquire secure client lock (busy).");
+      localDbSyncErrors++;
+    }
+  } else {
+    webLog("[ManualSync] Skipped: WiFi or Script ID not ready.");
+  }
+  manualSyncRunning = false;
+  vTaskDelete(NULL);
+}
+
+void triggerManualSync() {
+  webLog("[ManualSync] Manual sync triggered by user.");
+  manualSyncRunning = true;
+  // Spawn a one-shot named task (FreeRTOS requires plain C function pointer, not lambda)
+  xTaskCreatePinnedToCore(manualSyncTaskFn, "manual_sync", 12288, NULL, 1, NULL, 0);
+}
+
+
 // ==================== CALLER VALIDATION SYNC ====================
 struct ValidateTaskData {
   String phoneNumber;
@@ -901,49 +2234,63 @@ void validateTask(void *pvParameters) {
   }
   
   int tempResult = 0;
-  if (WiFi.status() == WL_CONNECTED && scriptId.length() > 0) {
-    webLog("[HTTP Task] Validating caller ID via Google Sheets: " + data->phoneNumber);
-    
-    // Heap allocate to prevent stack overflow
-    WiFiClientSecure *client = new WiFiClientSecure();
-    HTTPClient *http = new HTTPClient();
-    
-    if (client != nullptr && http != nullptr) {
-      client->setInsecure(); // Bypass SSL verification
+  
+  // Try local search first
+  if (isCustomerRegisteredLocal(data->phoneNumber)) {
+    webLog("[HTTP Task] Caller ID verified locally (SD card database): " + data->phoneNumber);
+    tempResult = 1;
+  }
+  // Fallback to Google Sheets live check if WiFi available
+  else if (WiFi.status() == WL_CONNECTED && scriptId.length() > 0) {
+    if (acquireSecureClientLock(15000)) { // Wait up to 15 seconds for lock
+      webLog("[HTTP Task] Validating caller ID via Google Sheets: " + data->phoneNumber);
       
-      // URL Encoding + as %2B in case there is a +
-      String encPhone = data->phoneNumber;
-      encPhone.replace("+", "%2B");
-      String url = "https://script.google.com/macros/s/" + scriptId + "/exec?action=validateUser&phone=" + encPhone + "&sheetId=" + sheetId;
+      // Heap allocate to prevent stack overflow
+      WiFiClientSecure *client = new WiFiClientSecure();
+      HTTPClient *http = new HTTPClient();
       
-      if (http->begin(*client, url)) {
-        http->setTimeout(25000); // 25 seconds timeout for caller validation
-        http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-        int httpCode = http->GET();
-        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
-          String payload = http->getString();
-          webLog("[HTTP Task] Validation Response: " + payload);
-          if (payload.indexOf("\"registered\":true") != -1 || payload.indexOf("\"registered\": true") != -1) {
-            tempResult = 1;
+      if (client != nullptr && http != nullptr) {
+        client->setInsecure(); // Bypass SSL verification
+        
+        // URL Encoding + as %2B in case there is a +
+        String encPhone = data->phoneNumber;
+        encPhone.replace("+", "%2B");
+        String url = "https://script.google.com/macros/s/" + scriptId + "/exec?action=validateUser&phone=" + encPhone + "&sheetId=" + sheetId;
+        
+        if (http->begin(*client, url)) {
+          http->setTimeout(25000); // 25 seconds timeout for caller validation
+          http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+          int httpCode = http->GET();
+          if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+            String payload = http->getString();
+            webLog("[HTTP Task] Validation Response: " + payload);
+            if (payload.indexOf("\"registered\":true") != -1 || payload.indexOf("\"registered\": true") != -1) {
+              tempResult = 1;
+            } else {
+              tempResult = 0;
+            }
           } else {
+            webLog("[HTTP Task] Validation Failed. HTTP Code: " + String(httpCode));
             tempResult = 0;
           }
+          http->end();
         } else {
-          webLog("[HTTP Task] Validation Failed. HTTP Code: " + String(httpCode));
+          webLog("[HTTP Task] Validation connection failed.");
           tempResult = 0;
         }
-        http->end();
       } else {
-        webLog("[HTTP Task] Validation connection failed.");
+        webLog("[HTTP Task] Memory allocation failed in validation task.");
         tempResult = 0;
       }
+      
+      if (client != nullptr) delete client;
+      if (http != nullptr) delete http;
+      
+      releaseSecureClientLock();
     } else {
-      webLog("[HTTP Task] Memory allocation failed in validation task.");
+      webLog("[HTTP Task] Validation failed: secure client lock busy.");
       tempResult = 0;
     }
-    
-    if (client != nullptr) delete client;
-    if (http != nullptr) delete http;
   } else {
     webLog("[HTTP Task] No WiFi or script ID. Assuming invalid caller.");
     tempResult = 0;
@@ -977,46 +2324,51 @@ void syncSmsTask(void *pvParameters) {
   }
 
   if (WiFi.status() == WL_CONNECTED && scriptId.length() > 0) {
-    webLog("[HTTP Task] Syncing SMS to Google Sheets script: " + scriptId);
-    WiFiClientSecure *client = new WiFiClientSecure();
-    HTTPClient *http = new HTTPClient();
-    
-    if (client != nullptr && http != nullptr) {
-      client->setInsecure();
-      String url = "https://script.google.com/macros/s/" + scriptId + "/exec";
+    if (acquireSecureClientLock(15000)) {
+      webLog("[HTTP Task] Syncing SMS to Google Sheets script: " + scriptId);
+      WiFiClientSecure *client = new WiFiClientSecure();
+      HTTPClient *http = new HTTPClient();
       
-      if (http->begin(*client, url)) {
-        http->setTimeout(25000); // 25 seconds timeout for SMS sync
-        http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-        http->addHeader("Content-Type", "application/json");
+      if (client != nullptr && http != nullptr) {
+        client->setInsecure();
+        String url = "https://script.google.com/macros/s/" + scriptId + "/exec";
         
-        StaticJsonDocument<300> doc;
-        doc["phoneNumber"] = data->phoneNumber;
-        doc["message"] = data->message;
-        doc["direction"] = data->direction;
-        doc["status"] = data->status;
-        doc["mac"] = myMac;
-        doc["user"] = deviceUser;
-        doc["pass"] = devicePass;
-        doc["sheetId"] = sheetId;
-        
-        String jsonStr;
-        serializeJson(doc, jsonStr);
-        
-        int httpCode = http->POST(jsonStr);
-        if (httpCode == 200 || httpCode == 302) {
-          webLog("[HTTP Task] SMS Sync status code: " + String(httpCode));
-        } else {
-          webLog("[HTTP Task] SMS Sync POST failure: " + (httpCode > 0 ? String(httpCode) : http->errorToString(httpCode)));
+        if (http->begin(*client, url)) {
+          http->setTimeout(25000); // 25 seconds timeout for SMS sync
+          http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+          http->addHeader("Content-Type", "application/json");
+          
+          StaticJsonDocument<300> doc;
+          doc["phoneNumber"] = data->phoneNumber;
+          doc["message"] = data->message;
+          doc["direction"] = data->direction;
+          doc["status"] = data->status;
+          doc["mac"] = myMac;
+          doc["user"] = deviceUser;
+          doc["pass"] = devicePass;
+          doc["sheetId"] = sheetId;
+          
+          String jsonStr;
+          serializeJson(doc, jsonStr);
+          
+          int httpCode = http->POST(jsonStr);
+          if (httpCode == 200 || httpCode == 302) {
+            webLog("[HTTP Task] SMS Sync status code: " + String(httpCode));
+          } else {
+            webLog("[HTTP Task] SMS Sync POST failure: " + (httpCode > 0 ? String(httpCode) : http->errorToString(httpCode)));
+          }
+          http->end();
         }
-        http->end();
+      } else {
+        webLog("[HTTP Task] Memory allocation failed for SMS sync client/http");
       }
+      
+      if (client != nullptr) delete client;
+      if (http != nullptr) delete http;
+      releaseSecureClientLock();
     } else {
-      webLog("[HTTP Task] Memory allocation failed for SMS sync client/http");
+      webLog("[HTTP Task] SMS Sync skipped: secure client busy");
     }
-    
-    if (client != nullptr) delete client;
-    if (http != nullptr) delete http;
   }
   delete data;
   vTaskDelete(NULL);
@@ -1031,7 +2383,7 @@ void triggerSmsSync(String timeStr, String phone, String msg, String direction, 
     data->message = msg;
     data->direction = direction;
     data->status = status;
-    xTaskCreatePinnedToCore(syncSmsTask, "sms_sync_task", 6144, (void *)data, 1, NULL, 0);
+    xTaskCreatePinnedToCore(syncSmsTask, "sms_sync_task", 12288, (void *)data, 1, NULL, 0);
   }
 }
 
@@ -1044,10 +2396,14 @@ void addSmsLog(String phone, String msg, String direction, String status) {
   char timeBuf[16];
   snprintf(timeBuf, sizeof(timeBuf), "%02duh %02dum %02dus", (int)hrs, (int)mins, (int)secs);
   
+  // ── 1. Save to SD card FIRST (instant, survives WiFi loss) ──
+  sdDbAppendSmsLog(String(timeBuf), phone, msg, direction, status);
+  
   if (syncSms) {
     sendTelegramAlert("SMS [" + direction + "]: " + phone + " - Message: " + msg);
   }
   
+  // ── 2. Push to GSheets in background ──
   triggerSmsSync(String(timeBuf), phone, msg, direction, status);
 }
 
@@ -1077,53 +2433,58 @@ void syncTask(void *pvParameters) {
   }
 
   if (WiFi.status() == WL_CONNECTED && scriptId.length() > 0) {
-    webLog("[HTTP Task] Syncing event to Google Sheets script: " + scriptId);
-    WiFiClientSecure *client = new WiFiClientSecure();
-    HTTPClient *http = new HTTPClient();
-    
-    if (client != nullptr && http != nullptr) {
-      client->setInsecure(); // Bypass SSL verification
-      String url = "https://script.google.com/macros/s/" + scriptId + "/exec?action=logCall";
+    if (acquireSecureClientLock(15000)) {
+      webLog("[HTTP Task] Syncing event to Google Sheets script: " + scriptId);
+      WiFiClientSecure *client = new WiFiClientSecure();
+      HTTPClient *http = new HTTPClient();
       
-      if (http->begin(*client, url)) {
-        http->setTimeout(25000); // 25 seconds timeout for Sheets event sync
-        http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-        http->addHeader("Content-Type", "application/json");
+      if (client != nullptr && http != nullptr) {
+        client->setInsecure(); // Bypass SSL verification
+        String url = "https://script.google.com/macros/s/" + scriptId + "/exec?action=logCall";
         
-        StaticJsonDocument<400> doc;  // Increased from 300 to 400 for all fields
-        doc["action"] = "logCall";    // Tell GScript router to log this as a call record
-        doc["timeStr"] = data->timeStr;
-        doc["phoneNumber"] = data->phoneNumber;
-        doc["dtmfData"] = data->dtmfData;
-        doc["callStatus"] = data->callStatus;
-        doc["direction"] = data->direction;
-        doc["mac"] = myMac;
-        doc["user"] = deviceUser;
-        doc["pass"] = devicePass;
-        doc["sheetId"] = sheetId;
-        
-        String jsonStr;
-        serializeJson(doc, jsonStr);
-        
-        int httpCode = http->POST(jsonStr);
-        if (httpCode == 200 || httpCode == 302) {
-          webLog("[HTTP Task] Sync status code: " + String(httpCode));
-          sheetsSyncCount++;
-          sheetsLastSyncTime = data->timeStr;
+        if (http->begin(*client, url)) {
+          http->setTimeout(25000); // 25 seconds timeout for Sheets event sync
+          http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+          http->addHeader("Content-Type", "application/json");
+          
+          StaticJsonDocument<400> doc;  // Increased from 300 to 400 for all fields
+          doc["action"] = "logCall";    // Tell GScript router to log this as a call record
+          doc["timeStr"] = data->timeStr;
+          doc["phoneNumber"] = data->phoneNumber;
+          doc["dtmfData"] = data->dtmfData;
+          doc["callStatus"] = data->callStatus;
+          doc["direction"] = data->direction;
+          doc["mac"] = myMac;
+          doc["user"] = deviceUser;
+          doc["pass"] = devicePass;
+          doc["sheetId"] = sheetId;
+          
+          String jsonStr;
+          serializeJson(doc, jsonStr);
+          
+          int httpCode = http->POST(jsonStr);
+          if (httpCode == 200 || httpCode == 302) {
+            webLog("[HTTP Task] Sync status code: " + String(httpCode));
+            sheetsSyncCount++;
+            sheetsLastSyncTime = data->timeStr;
+          } else {
+            webLog("[HTTP Task] Sync POST failure: " + (httpCode > 0 ? String(httpCode) : http->errorToString(httpCode)));
+            sheetsSyncErrors++;
+          }
+          http->end();
         } else {
-          webLog("[HTTP Task] Sync POST failure: " + (httpCode > 0 ? String(httpCode) : http->errorToString(httpCode)));
-          sheetsSyncErrors++;
+          webLog("[HTTP Task] Unable to resolve endpoint URL");
         }
-        http->end();
       } else {
-        webLog("[HTTP Task] Unable to resolve endpoint URL");
+        webLog("[HTTP Task] Memory allocation failed for sync client/http");
       }
+      
+      if (client != nullptr) delete client;
+      if (http != nullptr) delete http;
+      releaseSecureClientLock();
     } else {
-      webLog("[HTTP Task] Memory allocation failed for sync client/http");
+      webLog("[HTTP Task] Event Sync skipped: secure client busy");
     }
-    
-    if (client != nullptr) delete client;
-    if (http != nullptr) delete http;
   } else {
     webLog("[HTTP Task] Skip sync: Wi-Fi not connected or Script ID not set.");
   }
@@ -1146,8 +2507,8 @@ void triggerDirectSync(String timeStr, String phone, String dtmf, String status,
     data->callStatus = status;
     data->direction = direction;
     
-    // Allocate 6KB stack on core 0 to handle HTTPS handshake processes (heap allocated clients)
-    BaseType_t res = xTaskCreatePinnedToCore(syncTask, "g_sync_task", 6144, (void *)data, 1, NULL, 0);
+    // Allocate 16KB stack on core 0 to handle HTTPS handshake processes (heap allocated clients)
+    BaseType_t res = xTaskCreatePinnedToCore(syncTask, "g_sync_task", 12288, (void *)data, 1, NULL, 0);
     if (res != pdPASS) {
       webLog("[HTTP Sync] Failed to allocate thread task");
       delete data;
@@ -1164,21 +2525,27 @@ void addCallLog(String phone, String dtmf, String status) {
   char timeBuf[16];
   snprintf(timeBuf, sizeof(timeBuf), "%02duh %02dum %02dus", (int)hrs, (int)mins, (int)secs);
   
-  callLogs[logInsertIndex].timeStr = String(timeBuf);
-  callLogs[logInsertIndex].phoneNumber = phone.length() > 0 ? phone : "Unknown";
-  callLogs[logInsertIndex].dtmfData = dtmf.length() > 0 ? dtmf : "No Input";
-  callLogs[logInsertIndex].callStatus = status;
+  String timeStr = String(timeBuf);
+  String direction = (status == "Dialing Callback") ? "Outgoing" : "Incoming";
   
-  String timeStr = callLogs[logInsertIndex].timeStr;
+  // ── 1. Save to SD card FIRST (instant, no WiFi required) ──
+  sdDbAppendCallLog(timeStr, phone.length() > 0 ? phone : "Unknown",
+                    dtmf.length() > 0 ? dtmf : "No Input", status, direction);
+  
+  // ── 2. Save to in-memory ring buffer (for dashboard display) ──
+  callLogs[logInsertIndex].timeStr     = timeStr;
+  callLogs[logInsertIndex].phoneNumber = phone.length() > 0 ? phone : "Unknown";
+  callLogs[logInsertIndex].dtmfData    = dtmf.length() > 0 ? dtmf : "No Input";
+  callLogs[logInsertIndex].callStatus  = status;
+  
   String phoneNumber = callLogs[logInsertIndex].phoneNumber;
-  String dtmfData = callLogs[logInsertIndex].dtmfData;
-  String callStatus = callLogs[logInsertIndex].callStatus;
+  String dtmfData    = callLogs[logInsertIndex].dtmfData;
+  String callStatus  = callLogs[logInsertIndex].callStatus;
   
   logInsertIndex = (logInsertIndex + 1) % MAX_LOGS;
-  if (logCount < MAX_LOGS) {
-    logCount++;
-  }
+  if (logCount < MAX_LOGS) { logCount++; }
   
+  // ── 3. Telegram alert ──
   if (syncIncoming && (status == "Missed" || status == "Answered" || status == "Rejected" || status == "Rejected/Unregistered" || status == "Timeout Hangup" || status == "Terminated")) {
     sendTelegramAlert("Call Log: " + phone + " - Status: " + status + " - DTMF: " + dtmfData);
   }
@@ -1188,7 +2555,7 @@ void addCallLog(String phone, String dtmf, String status) {
 
   webLog("Local call logged for caller: " + phoneNumber + " [" + callStatus + "]");
   
-  String direction = (callStatus == "Dialing Callback") ? "Outgoing" : "Incoming";
+  // ── 4. Push to GSheets in background (async, does NOT block call processing) ──
   triggerDirectSync(timeStr, phoneNumber, dtmfData, callStatus, direction);
 }
 
@@ -1219,10 +2586,17 @@ void changeState(CallState newState) {
       ivrCurrentNode         = "start"; // Reset IVR node pointer
       ivrWarrantyCheckResult = 0;    // Reset warranty check state
       ivrComplaintResult     = 0;    // Reset complaint state
+      ivrInstallationResult  = 0;    // Reset installation state
+      ivrInstallationTicket  = "";   // Reset installation ticket
+      warrantyRetryCount     = 0;    // Reset warranty retries
       incomingRingCount      = 0;    // Reset ring count
       dtmfTimeoutCount       = 0;    // Reset DTMF timeout count
       currentAudioTrack      = 0;
       currentAudioFolder     = 0;
+      playCount01001         = 0;
+      initialMenuPhase       = false;
+      pending01002DelayStart = 0;
+      pending01002Play       = false;
       // Flush GSM serial buffer
       while (Serial2.available() > 0) { Serial2.read(); }
       Serial2.println("AT+CLIP=1"); // Re-arm caller ID notification for next call
@@ -1242,8 +2616,21 @@ void changeState(CallState newState) {
 
     case STATE_ANSWERING:
     case STATE_PLAY_WELCOME:
+    case STATE_WAIT_LANGUAGE_DTMF:
+    case STATE_PLAY_VERIFICATION_SUCCESS:
     case STATE_PLAY_MENU:
-    case STATE_WAIT_DTMF:
+    case STATE_WAIT_MENU_DTMF:
+    case STATE_COLLECTING_WARRANTY_NO:
+    case STATE_VERIFYING_WARRANTY:
+    case STATE_COLLECTING_COMPLAINT_NO:
+    case STATE_REGISTERING_COMPLAINT:
+    case STATE_HELP_CENTER:
+    case STATE_WAIT_HELP_CENTER_DTMF:
+    case STATE_COLLECTING_INSTALLATION_NO:
+    case STATE_REGISTERING_INSTALLATION:
+    case STATE_CONNECTING_CUSTOMER_CARE:
+    case STATE_PLAY_REPEAT_MENU:
+    case STATE_PLAY_DISCONNECT_MESSAGE:
     case STATE_PLAY_SELECTION:
     case STATE_RETURN_MENU:
     case STATE_HANGUP:
@@ -1252,14 +2639,16 @@ void changeState(CallState newState) {
       break;
 
     case STATE_CALL_CONNECTED:
-      digitalWrite(LED_PIN, HIGH); // Onboard LED solid HIGH as power indicator
+      digitalWrite(LED_PIN, LOW); 
       digitalWrite(LED_GREEN, HIGH);
-      webLog("Call connected. Playing Language Selection Menu...");
-      currentAudioFolder = 4;
-      currentAudioTrack = 2; // Language selection menu WAV
+      webLog("[New IVR] Call connected. Playing initial welcome/language selection /01/001.wav...");
+      currentAudioFolder = 1;
+      currentAudioTrack = 1; // Play /01/001.wav
+      dtmfTimeoutCount = 0;
       mp3Play(currentAudioFolder, currentAudioTrack);
       lastAudioPlayMillis = millis();
-      changeState(STATE_WAIT_DTMF);
+      lastActivityTime = millis();
+      changeState(STATE_PLAY_WELCOME);
       break;
 
     case STATE_ENDED:
@@ -1280,7 +2669,7 @@ void changeState(CallState newState) {
         
         // 1. Answered but hung up without selecting option
         if (isRegistered && 
-            (oldState == STATE_PLAY_WELCOME || oldState == STATE_PLAY_MENU || oldState == STATE_WAIT_DTMF || oldState == STATE_PLAY_SELECTION || oldState == STATE_COLLECTING_DTMF) && 
+            (oldState == STATE_PLAY_WELCOME || oldState == STATE_PLAY_MENU || oldState == STATE_WAIT_MENU_DTMF || oldState == STATE_WAIT_LANGUAGE_DTMF || oldState == STATE_WAIT_HELP_CENTER_DTMF || oldState == STATE_PLAY_SELECTION || oldState == STATE_COLLECTING_DTMF) && 
             dtmfBuffer.length() == 0) {
           String msg = "Dear customer, you called but did not select any options. Thank you for calling V-Varma. Website: vvarma.gsvee.in";
           sendSMS(callerNumber, msg);
@@ -1419,11 +2808,11 @@ bool sendATCommand(String cmd, String expectedResponse, unsigned long timeoutMs)
     gsmModuleConnected = true;
   } else {
     consecutiveFailures++;
-    // Require 5 consecutive timeouts (was 3) before marking module as offline.
+    // Require 15 consecutive timeouts (was 5) before marking module as offline.
     // This prevents false-offline from slow modem responses during tower registration.
-    if (consecutiveFailures >= 5) {
+    if (consecutiveFailures >= 15) {
       gsmModuleConnected = false;
-      webLog("[GSM] 5 consecutive timeouts — marking module offline.");
+      webLog("[GSM] 15 consecutive timeouts — marking module offline.");
     }
   }
   
@@ -1435,6 +2824,18 @@ void parseGsmResponse(String line) {
   line.trim();
   if (line.length() == 0) return;
   webLog("GSM RX: " + line);
+
+  // Detect GSM module reboot/reset URCs (*ATREADY, SMS DONE, etc.)
+  if (line.indexOf("*ATREADY") != -1 || line.indexOf("SMS DONE") != -1 || line.indexOf("+CPIN: READY") != -1) {
+    gsmModuleConnected = true;
+    if (currentCallState != STATE_IDLE) {
+      webLog("[GSM] Module reset/reboot URC detected! Force resetting call state to IDLE.");
+      mp3Stop();
+      changeState(STATE_IDLE);
+      gsmRegStatus = "0";
+      callWaitingActivated = false;
+    }
+  }
 
   // If we are waiting for the SMS message body
   if (receivingSmsBody) {
@@ -1466,6 +2867,8 @@ void parseGsmResponse(String line) {
       if (!callSystemActive) {
         webLog("Call System is disabled. Rejecting call from: " + tempNumber);
         Serial2.println("ATH");
+        delay(100);
+        Serial2.println("AT+CHUP");
         addCallLog(tempNumber, "", "Auto-Rejected (Call Control Off)");
         return;
       }
@@ -1478,21 +2881,17 @@ void parseGsmResponse(String line) {
         validatingNumber = tempNumber;
         incomingRingCount = 1;
         
-        webLog("Incoming call. Answering immediately to present Language Selection Menu...");
-        validationResult = -1;
-        ivrSelectedLanguage = 0;
-        
-        // Start validation task immediately on call receipt
-        ValidateTaskData *vData = new ValidateTaskData();
-        vData->phoneNumber = callerNumber;
-        validatingNumber = callerNumber;
-        webLog("[New IVR] Starting validation check immediately on call receipt: " + callerNumber);
-        xTaskCreatePinnedToCore(validateTask, "validate_task", 6144, (void *)vData, 1, NULL, 0);
+        webLog("[New IVR] Incoming call from: " + tempNumber + ". Answering immediately...");
+        ivrSelectedLanguage = 1;
+        validationResult = 1;
+        callerIsRegistered = true;
         
         changeState(STATE_ANSWERING);
       } else {
         webLog("Line busy. Rejecting concurrent call from: " + tempNumber + " (current state: " + getStateName(currentCallState) + ")");
         Serial2.println("ATH");
+        delay(100);
+        Serial2.println("AT+CHUP");
       }
     }
   }
@@ -1514,24 +2913,12 @@ void parseGsmResponse(String line) {
       String key = line.substring(colon + 1);
       key.trim();
       if (key.length() > 0) {
-        char keyChar = key.charAt(0);
         lastDtmfDigit = key;
         dtmfBuffer += key;
         lastDtmfMillis = millis();
         lastActivityTime = millis();
         webLog("DTMF Tone: " + key + " | Buffer: " + dtmfBuffer);
-        
-        if (currentCallState == STATE_WAIT_DTMF || 
-            currentCallState == STATE_PLAY_MENU || 
-            currentCallState == STATE_PLAY_WELCOME || 
-            currentCallState == STATE_PLAY_SELECTION ||
-            currentCallState == STATE_RETURN_MENU ||
-            currentCallState == STATE_CALL_CONNECTED) {
-          processNewIvrDtmf(keyChar);
-        } else {
-          changeState(STATE_COLLECTING_DTMF);
-          processIvrDtmf(key);
-        }
+        processIvrDtmf(key);
       }
     }
   }
@@ -1544,9 +2931,11 @@ void parseGsmResponse(String line) {
       playIvrAudio("/01/012.mp3"); // Agent unavailable
       delay(5000);
       Serial2.println("ATH");
+      delay(100);
+      Serial2.println("AT+CHUP");
       addCallLog(callerNumber, dtmfBuffer, "Agent Call Failed (" + line + ")");
       changeState(STATE_ENDED);
-    } else if (currentCallState == STATE_ACTIVE_CALL || currentCallState == STATE_WAIT_DTMF || currentCallState == STATE_COLLECTING_DTMF || currentCallState == STATE_COLLECTING_PRODUCT_NO) {
+    } else if (currentCallState != STATE_IDLE && currentCallState != STATE_RINGING && currentCallState != STATE_CALLBACK_DIALING && currentCallState != STATE_ENDED) {
       webLog("[IVR] Active call hung up.");
       addCallLog(callerNumber, dtmfBuffer, callerIsRegistered ? "Callback Completed" : "Answered");
       changeState(STATE_ENDED);
@@ -1760,6 +3149,13 @@ void proxyGoogleSheets(String action) {
   }
   proxyInProgress = true;
 
+  if (!acquireSecureClientLock(20000)) { // Wait up to 20 seconds for lock
+    webLog("[Proxy] Failed to acquire secure client lock (busy).");
+    server.send(503, "application/json", "{\"error\":\"Proxy Secure Lock Busy\"}");
+    proxyInProgress = false;
+    return;
+  }
+
   webLog("[Proxy] Running Sheets proxy synchronously...");
   
   uint32_t freeH = ESP.getFreeHeap();
@@ -1825,6 +3221,7 @@ void proxyGoogleSheets(String action) {
   if (client != nullptr) delete client;
   if (http != nullptr) delete http;
 
+  releaseSecureClientLock();
   proxyInProgress = false;
   
   if (!streamed) {
@@ -1833,28 +3230,179 @@ void proxyGoogleSheets(String action) {
 }
 
 void handleGetCalls() {
-  // Always return local logs directly from ESP32 memory to avoid SSL handshake overload
-  StaticJsonDocument<1536> doc;
-  JsonArray arr = doc.to<JsonArray>();
+  // Serve call logs: RAM buffer first (most recent), then SD CSV for older persisted entries
+  server.sendHeader("Connection", "close");
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "application/json", "");
+  server.sendContent("[");
+  bool first = true;
+
+  // 1) RAM buffer (most recent calls, newest first)
   for (int i = 0; i < logCount; i++) {
     int idx = (logInsertIndex - 1 - i + MAX_LOGS) % MAX_LOGS;
-    JsonObject obj = arr.createNestedObject();
-    obj["timeStr"] = callLogs[idx].timeStr;
-    obj["phoneNumber"] = callLogs[idx].phoneNumber;
-    obj["dtmfData"] = callLogs[idx].dtmfData;
-    obj["callStatus"] = callLogs[idx].callStatus;
+    if (callLogs[idx].phoneNumber.length() == 0) continue;
+    String e = callLogs[idx].phoneNumber;
+    e.replace("\\", "\\\\"); e.replace("\"", "\\\"");
+    String t = callLogs[idx].timeStr;
+    t.replace("\\", "\\\\"); t.replace("\"", "\\\"");
+    String d = callLogs[idx].dtmfData;
+    d.replace("\\", "\\\\"); d.replace("\"", "\\\"");
+    String s = callLogs[idx].callStatus;
+    s.replace("\\", "\\\\"); s.replace("\"", "\\\"");
+    if (!first) server.sendContent(",");
+    first = false;
+    server.sendContent("{\"timeStr\":\"" + t + "\",\"phoneNumber\":\"" + e + "\",\"dtmfData\":\"" + d + "\",\"callStatus\":\"" + s + "\",\"source\":\"ram\"}");
+    yield();
   }
-  String jsonResponse;
-  serializeJson(doc, jsonResponse);
-  server.send(200, "application/json", jsonResponse);
+
+  // 2) SD CSV (older persisted calls)
+  if (sdCardFound && myFS && myFS->exists("/db/call_log.csv")) {
+    File f = myFS->open("/db/call_log.csv", FILE_READ);
+    if (f) {
+      int sdCount = 0;
+      while (f.available() && sdCount < 200) {
+        String line = f.readStringUntil('\n');
+        line.trim();
+        if (line.length() == 0) continue;
+        // Format: timeStr,phone,dtmf,status,direction
+        int c1 = line.indexOf(',');
+        if (c1 == -1) continue;
+        int c2 = line.indexOf(',', c1 + 1);
+        if (c2 == -1) continue;
+        int c3 = line.indexOf(',', c2 + 1);
+        if (c3 == -1) continue;
+        int c4 = line.indexOf(',', c3 + 1);
+        String t = line.substring(0, c1);
+        String p = line.substring(c1 + 1, c2);
+        String d = line.substring(c2 + 1, c3);
+        String s = (c4 != -1) ? line.substring(c3 + 1, c4) : line.substring(c3 + 1);
+        String dir = (c4 != -1) ? line.substring(c4 + 1) : "";
+        t.trim(); p.trim(); d.trim(); s.trim(); dir.trim();
+        p.replace("\\", "\\\\"); p.replace("\"", "\\\"");
+        t.replace("\\", "\\\\"); t.replace("\"", "\\\"");
+        if (!first) server.sendContent(",");
+        first = false;
+        server.sendContent("{\"timeStr\":\"" + t + "\",\"phoneNumber\":\"" + p + "\",\"dtmfData\":\"" + d + "\",\"callStatus\":\"" + s + "\",\"direction\":\"" + dir + "\",\"source\":\"sd\"}");
+        sdCount++;
+        yield();
+      }
+      f.close();
+    }
+  }
+
+  server.sendContent("]");
+  server.sendContent(""); // Terminate chunked transfer
 }
 
 void handleGetMessages() {
-  proxyGoogleSheets("get_messages");
+  // Serve SMS logs from SD card CSV — fast, no GSheets proxy needed
+  // Format in /db/sms_log.csv: timeStr,phone,message,direction,status
+  if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+  server.sendHeader("Connection", "close");
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "application/json", "");
+  server.sendContent("[");
+  bool first = true;
+  if (sdCardFound && myFS && myFS->exists("/db/sms_log.csv")) {
+    File f = myFS->open("/db/sms_log.csv", FILE_READ);
+    if (f) {
+      int cnt = 0;
+      while (f.available() && cnt < 200) {
+        String line = f.readStringUntil('\n');
+        line.trim();
+        if (line.length() == 0) continue;
+        // Format: timeStr,phone,message,direction,status
+        int c1 = line.indexOf(',');
+        if (c1 == -1) continue;
+        int c2 = line.indexOf(',', c1 + 1);
+        if (c2 == -1) continue;
+        int c3 = line.indexOf(',', c2 + 1);
+        if (c3 == -1) continue;
+        int c4 = line.indexOf(',', c3 + 1);
+        String t   = line.substring(0, c1);
+        String ph  = line.substring(c1 + 1, c2);
+        String msg = (c3 != -1) ? line.substring(c2 + 1, c3) : line.substring(c2 + 1);
+        String dir = (c3 != -1 && c4 != -1) ? line.substring(c3 + 1, c4) : (c3 != -1 ? line.substring(c3 + 1) : "");
+        String st  = (c4 != -1) ? line.substring(c4 + 1) : "";
+        t.trim(); ph.trim(); msg.trim(); dir.trim(); st.trim();
+        ph.replace("\\", "\\\\"); ph.replace("\"", "\\\"");
+        msg.replace("\\", "\\\\"); msg.replace("\"", "\\\"");
+        t.replace("\\", "\\\\"); t.replace("\"", "\\\"");
+        if (!first) server.sendContent(",");
+        first = false;
+        server.sendContent("{\"timeStr\":\"" + t + "\",\"phoneNumber\":\"" + ph + "\",\"message\":\"" + msg + "\",\"direction\":\"" + dir + "\",\"status\":\"" + st + "\"}");
+        cnt++;
+        yield();
+      }
+      f.close();
+    }
+  }
+  server.sendContent("]");
+  server.sendContent("");
 }
 
 void handleGetMobiles() {
-  proxyGoogleSheets("get_mobiles");
+  if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+  
+  if (sdCardFound && myFS && myFS->exists("/customers.csv")) {
+    File f = myFS->open("/customers.csv", FILE_READ);
+    if (f) {
+      server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+      server.send(200, "application/json", "");
+      server.sendContent("[");
+      
+      bool first = true;
+      while (f.available()) {
+        String line = f.readStringUntil('\n');
+        line.trim();
+        if (line.length() == 0) continue;
+        
+        int c1 = line.indexOf(',');
+        if (c1 == -1) continue;
+        int c2 = line.indexOf(',', c1 + 1);
+        int c3 = -1;
+        if (c2 != -1) {
+          c3 = line.indexOf(',', c2 + 1);
+        }
+        
+        String phone = line.substring(0, c1);
+        String name = (c2 != -1) ? line.substring(c1 + 1, c2) : line.substring(c1 + 1);
+        String product = "";
+        String serial = "";
+        
+        if (c2 != -1) {
+          if (c3 != -1) {
+            product = line.substring(c2 + 1, c3);
+            serial = line.substring(c3 + 1);
+          } else {
+            product = line.substring(c2 + 1);
+          }
+        }
+        
+        phone.trim(); name.trim(); product.trim(); serial.trim();
+        
+        // Escape backslashes and double quotes in fields for valid JSON
+        name.replace("\\", "\\\\"); name.replace("\"", "\\\"");
+        product.replace("\\", "\\\\"); product.replace("\"", "\\\"");
+        serial.replace("\\", "\\\\"); serial.replace("\"", "\\\"");
+        
+        if (!first) {
+          server.sendContent(",");
+        }
+        first = false;
+        
+        String json = "{\"Phone\":\"" + phone + "\",\"Mobile\":\"" + phone + "\",\"Name\":\"" + name + "\",\"Product\":\"" + product + "\",\"Serial\":\"" + serial + "\"}";
+        server.sendContent(json);
+        yield(); // Prevent task watchdog starvation
+      }
+      server.sendContent("]");
+      server.sendContent(""); // Terminate chunked transfer (CRITICAL!)
+      f.close();
+      return;
+    }
+  }
+  
+  server.send(200, "application/json", "[]");
 }
 
 void sendLargePage(const char* data) {
@@ -1923,12 +3471,21 @@ int getFolderCount() {
 }
 
 void updateSDCache() {
+  webLog("[updateSDCache] start");
   lastSdActivityMillis = millis();
   if (sdCardFound) {
+    webLog("[updateSDCache] calling getTotalBytes()...");
     sdCardTotalBytes = getTotalBytes();
-    sdCardUsedBytes = getUsedBytes();
-    sdCardFileCount = getFileCount();
-    sdCardFolderCount = getFolderCount();
+    webLog("[updateSDCache] getTotalBytes done");
+    if (myFS == &SPIFFS) {
+      sdCardUsedBytes = SPIFFS.usedBytes();
+      sdCardFileCount = getFileCount();
+      sdCardFolderCount = getFolderCount();
+    } else {
+      sdCardUsedBytes = 0; // Skip slow FAT scan on SD card to prevent boot hangs
+      sdCardFileCount = 0; // Skip slow recursive scan on SD card
+      sdCardFolderCount = 0; // Skip slow recursive scan on SD card
+    }
     sdCardUnsupportedFS = false;
   } else {
     sdCardTotalBytes = 0;
@@ -1941,6 +3498,7 @@ void updateSDCache() {
       sdCardUnsupportedFS = false;
     }
   }
+  webLog("[updateSDCache] end");
 }
 
 void createParentDirs(String path) {
@@ -1954,24 +3512,53 @@ void createParentDirs(String path) {
   }
 }
 
+String escapeJsonString(String str) {
+  str.replace("\\", "\\\\");
+  str.replace("\"", "\\\"");
+  return str;
+}
+
 void printDirectory(String dirPath, bool& first) {
+  // Skip system folders and hidden directories
+  if (dirPath.equalsIgnoreCase("/System Volume Information") || 
+      dirPath.startsWith("/System Volume Information/") || 
+      dirPath.equalsIgnoreCase("/FOUND.000") || 
+      dirPath.startsWith("/FOUND.000/") ||
+      dirPath.startsWith("/.")) {
+    return;
+  }
+
   File dir = myFS->open(dirPath);
   if (!dir || !dir.isDirectory()) return;
 
   File file = dir.openNextFile();
   while (file) {
+    String fname = String(file.path());
+    
+    // Skip hidden files
+    String nameOnly = fname;
+    int lastSlash = fname.lastIndexOf('/');
+    if (lastSlash != -1) {
+      nameOnly = fname.substring(lastSlash + 1);
+    }
+    
     if (file.isDirectory()) {
-      String subPath = String(file.path());
-      file.close(); // Close subdirectory child handle before recursing
-      printDirectory(subPath, first);
-    } else {
-      String fname = String(file.path());
-      if (!first) {
-        server.sendContent(",");
+      if (!nameOnly.startsWith(".")) {
+        file.close(); // Close subdirectory child handle before recursing
+        printDirectory(fname, first);
+      } else {
+        file.close();
       }
-      first = false;
-      String fileJson = "{\"name\":\"" + fname + "\",\"size\":" + String(file.size()) + "}";
-      server.sendContent(fileJson);
+    } else {
+      if (!nameOnly.startsWith(".")) {
+        if (!first) {
+          server.sendContent(",");
+        }
+        first = false;
+        String escapedName = escapeJsonString(fname);
+        String fileJson = "{\"name\":\"" + escapedName + "\",\"size\":" + String(file.size()) + "}";
+        server.sendContent(fileJson);
+      }
       file.close();
     }
     file = dir.openNextFile();
@@ -1988,7 +3575,7 @@ void handleFileUpload() {
     if (!filename.startsWith("/")) filename = "/" + filename;
     webLog("SD Upload Start: " + filename);
     createParentDirs(filename);
-    uploadFile = myFS->open(filename, FILE_WRITE);
+    uploadFile = myFS->open(filename, "w");
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     lastSdActivityMillis = millis();
     if (uploadFile) {
@@ -2050,31 +3637,27 @@ void setupWebServer() {
   server.on("/wpad.dat", handleCaptivePortalRedirect);
 
   server.on("/dashboard", []() {
+    server.sendHeader("Connection", "close");
     // Always serve the dashboard — AP clients and STA clients both need access
-    server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-    server.send(200, "text/html", "");
-
     bool fileServed = false;
-    if (sdCardFound && myFS) {
-      File f = myFS->open("/index.html", FILE_READ);
-      if (f) {
-        char buf[1025];
-        while (f.available()) {
-          int n = f.read((uint8_t*)buf, 1024);
-          if (n > 0) {
-            buf[n] = '\0';
-            server.sendContent(buf);
-          }
+    if (currentCallState == STATE_IDLE && sdCardFound && myFS) {
+      if (sdTake()) {
+        File f = myFS->open("/index.html", FILE_READ);
+        if (f) {
+          server.streamFile(f, "text/html");
+          f.close();
+          fileServed = true;
         }
-        f.close();
-        fileServed = true;
+        sdGive();
       }
     }
 
     if (!fileServed) {
+      server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+      server.send(200, "text/html", "");
       sendLargePage(index_html);
+      server.sendContent(""); // End of chunked response
     }
-    server.sendContent(""); // End of chunked response
   });
 
   server.on("/login", []() {
@@ -2095,114 +3678,131 @@ void setupWebServer() {
   });
 
   server.on("/status", []() {
-    StaticJsonDocument<2048> doc;
-    doc["mcu"] = true;
-    doc["net"] = (gsmRegStatus == "1" || gsmRegStatus == "5");
-    doc["db"] = (WiFi.status() == WL_CONNECTED && scriptId.length() > 0);
-    doc["wifi"] = (WiFi.status() == WL_CONNECTED);
-    doc["ssid"] = (WiFi.status() == WL_CONNECTED) ? WiFi.SSID() : "Not Connected";
-    doc["rssi"] = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
-    doc["ip"] = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
-    doc["mac"] = myMac;
-    doc["script"] = (scriptId.length() > 0);
-    doc["scriptId"] = scriptId;
-    doc["sheetId"] = sheetId;
-    doc["sheetName"] = sheetName;
-    doc["syncIncoming"] = syncIncoming;
-    doc["syncOutgoing"] = syncOutgoing;
-    doc["syncSms"] = syncSms;
-    doc["syncSystem"] = syncSystem;
-    doc["syncNetwork"] = syncNetwork;
-    doc["devUser"] = deviceUser;
-    doc["devPass"] = devicePass;
-    doc["apSsid"] = savedApSSID;
-    doc["apPass"] = savedApPass;
-    doc["mode"] = (currentSystemState == SYSTEM_WIFI_CONFIG) ? "AP" : "STA";
-    doc["uptime"] = millis() / 1000;
-    doc["syncCount"] = sheetsSyncCount;
-    doc["syncErrors"] = sheetsSyncErrors;
-    doc["lastSyncTime"] = sheetsLastSyncTime;
-    doc["callSystemActive"] = callSystemActive;
-    doc["smsSystemActive"] = smsSystemActive;
-    doc["testModeEnabled"] = testModeEnabled;
-    doc["callerValidationEnabled"] = callerValidationEnabled;
-    doc["customIvrEnabled"] = customIvrEnabled;
-    doc["agentPhoneNumber"] = agentPhoneNumber;
-    
-    switch(currentCallState) {
-      case STATE_IDLE:             doc["state"] = "IDLE"; break;
-      case STATE_RINGING:          doc["state"] = "RINGING"; break;
-      case STATE_VERIFY_USER:      doc["state"] = "VERIFY USER"; break;
-      case STATE_ANSWERING:        doc["state"] = "ANSWERING"; break;
-      case STATE_CALL_CONNECTED:   doc["state"] = "CALL CONNECTED"; break;
-      case STATE_PLAY_WELCOME:     doc["state"] = "PLAY WELCOME"; break;
-      case STATE_PLAY_MENU:        doc["state"] = "PLAY MENU"; break;
-      case STATE_WAIT_DTMF:        doc["state"] = "WAIT DTMF"; break;
-      case STATE_PLAY_SELECTION:   doc["state"] = "PLAY SELECTION"; break;
-      case STATE_RETURN_MENU:      doc["state"] = "RETURN MENU"; break;
-      case STATE_HANGUP:           doc["state"] = "HANGUP"; break;
-      case STATE_CALLBACK_DIALING: doc["state"] = "CALLBACK DIALING"; break;
-      case STATE_COLLECTING_PRODUCT_NO: doc["state"] = "WARRANTY INPUT"; break;
-      case STATE_AGENT_CONNECTING: doc["state"] = "AGENT CONNECTING"; break;
-      case STATE_VALIDATING_SECOND_CALL: doc["state"] = "VALIDATING SECOND CALL"; break;
-      case STATE_ENDED:            doc["state"] = "ENDED"; break;
-    }
-    doc["callerNumber"] = callerNumber;
-    doc["dtmfBuffer"] = dtmfBuffer;
-    doc["lastDtmfDigit"] = lastDtmfDigit;
-    doc["queueSize"] = callbackQueue.size();
-    if (currentCallState == STATE_ACTIVE_CALL || currentCallState == STATE_COLLECTING_DTMF) {
-      doc["callDuration"] = (millis() - callStartMillis) / 1000;
-    } else {
-      doc["callDuration"] = 0;
-    }
-
-    // GSM Status sub-object
-    JsonObject gsmObj = doc.createNestedObject("gsm");
-    gsmObj["sim"] = gsmSimStatus;
-    gsmObj["registration"] = gsmRegStatus;
-    gsmObj["operator"] = gsmOperator;
-    gsmObj["signal"] = gsmSignal;
-    gsmObj["battery"] = gsmBattery;
-    gsmObj["imei"] = (gsmImei.length() > 0) ? gsmImei : "Fetching...";
-    gsmObj["network"] = (gsmRegStatus == "1" || gsmRegStatus == "5") ? "4G LTE" : "Unknown";
-    gsmObj["simNumber"] = "+919876543210"; // Placeholder
-
-    // AP Clients
-    doc["apClients"] = WiFi.softAPgetStationNum();
-
-
-    // System Hardware Info
-    JsonObject sysObj = doc.createNestedObject("system");
-    sysObj["flashSize"] = String(ESP.getFlashChipSize() / (1024 * 1024)) + " MB";
-    sysObj["freeHeap"] = ESP.getFreeHeap();
-    sysObj["chipRevision"] = "v" + String(ESP.getChipRevision());
-    sysObj["sdkVersion"] = ESP.getSdkVersion();
-    sysObj["firmware"] = FIRMWARE_VERSION;
-    sysObj["macSta"] = WiFi.macAddress();
-    sysObj["macAp"] = WiFi.softAPmacAddress();
-    sysObj["cpuFreq"] = ESP.getCpuFreqMHz();
-    
-    // SD Card
-    JsonObject sdObj = doc.createNestedObject("sd");
-    if (sdCardFound) {
-      sdObj["mounted"] = true;
-      sdObj["type"] = (myFS == &SD) ? "SD" : "SPIFFS";
-      sdObj["totalBytes"] = sdCardTotalBytes;
-      sdObj["usedBytes"] = sdCardUsedBytes;
-      sdObj["fileCount"] = sdCardFileCount;
-    } else {
-      sdObj["mounted"] = false;
-    }
-    
-    sysObj["temperature"] = temperatureRead();
-    sysObj["socModel"] = ESP.getChipModel();
-    sysObj["coreFreq"] = String(ESP.getCpuFreqMHz()) + " MHz";
-    sysObj["minHeap"] = ESP.getMinFreeHeap();
-    sysObj["rtosTasks"] = uxTaskGetNumberOfTasks();
-
+    server.sendHeader("Connection", "close");
     String response;
-    serializeJson(doc, response);
+    response.reserve(1500);
+    response = "{";
+    response += "\"mcu\":true,";
+    response += "\"net\":" + String((gsmRegStatus == "1" || gsmRegStatus == "5") ? "true" : "false") + ",";
+    response += "\"db\":" + String((WiFi.status() == WL_CONNECTED && scriptId.length() > 0) ? "true" : "false") + ",";
+    response += "\"wifi\":" + String((WiFi.status() == WL_CONNECTED) ? "true" : "false") + ",";
+    response += "\"ssid\":\"" + String((WiFi.status() == WL_CONNECTED) ? WiFi.SSID() : "Not Connected") + "\",";
+    response += "\"rssi\":" + String((WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0) + ",";
+    response += "\"ip\":\"" + String((WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : WiFi.softAPIP().toString()) + "\",";
+    response += "\"mac\":\"" + myMac + "\",";
+    response += "\"script\":" + String((scriptId.length() > 0) ? "true" : "false") + ",";
+    response += "\"scriptId\":\"" + scriptId + "\",";
+    response += "\"sheetId\":\"" + sheetId + "\",";
+    response += "\"sheetName\":\"" + sheetName + "\",";
+    response += "\"syncIncoming\":" + String(syncIncoming ? "true" : "false") + ",";
+    response += "\"syncOutgoing\":" + String(syncOutgoing ? "true" : "false") + ",";
+    response += "\"syncSms\":" + String(syncSms ? "true" : "false") + ",";
+    response += "\"syncSystem\":" + String(syncSystem ? "true" : "false") + ",";
+    response += "\"syncNetwork\":" + String(syncNetwork ? "true" : "false") + ",";
+    response += "\"devUser\":\"" + deviceUser + "\",";
+    response += "\"devPass\":\"" + devicePass + "\",";
+    response += "\"apSsid\":\"" + savedApSSID + "\",";
+    response += "\"apPass\":\"" + savedApPass + "\",";
+    response += "\"mode\":\"" + String((currentSystemState == SYSTEM_WIFI_CONFIG) ? "AP" : "STA") + "\",";
+    response += "\"uptime\":" + String(millis() / 1000) + ",";
+    response += "\"syncCount\":" + String(sheetsSyncCount) + ",";
+    response += "\"syncErrors\":" + String(sheetsSyncErrors) + ",";
+    response += "\"lastSyncTime\":\"" + sheetsLastSyncTime + "\",";
+    response += "\"callSystemActive\":" + String(callSystemActive ? "true" : "false") + ",";
+    response += "\"smsSystemActive\":" + String(smsSystemActive ? "true" : "false") + ",";
+    response += "\"testModeEnabled\":" + String(testModeEnabled ? "true" : "false") + ",";
+    response += "\"callerValidationEnabled\":" + String(callerValidationEnabled ? "true" : "false") + ",";
+    response += "\"customIvrEnabled\":" + String(customIvrEnabled ? "true" : "false") + ",";
+    response += "\"agentPhoneNumber\":\"" + agentPhoneNumber + "\",";
+    
+    response += "\"state\":\"";
+    switch(currentCallState) {
+      case STATE_IDLE:             response += "IDLE"; break;
+      case STATE_RINGING:          response += "RINGING"; break;
+      case STATE_ANSWERING:        response += "ANSWERING"; break;
+      case STATE_CALL_CONNECTED:   response += "CALL CONNECTED"; break;
+      case STATE_PLAY_WELCOME:     response += "PLAY WELCOME"; break;
+      case STATE_WAIT_LANGUAGE_DTMF: response += "WAIT LANGUAGE DTMF"; break;
+      case STATE_VERIFY_USER:      response += "VERIFY USER"; break;
+      case STATE_PLAY_VERIFICATION_SUCCESS: response += "VERIFICATION SUCCESS"; break;
+      case STATE_PLAY_MENU:        response += "PLAY MENU"; break;
+      case STATE_WAIT_MENU_DTMF:    response += "WAIT MENU DTMF"; break;
+      case STATE_COLLECTING_WARRANTY_NO: response += "COLLECTING WARRANTY NO"; break;
+      case STATE_VERIFYING_WARRANTY: response += "VERIFYING WARRANTY"; break;
+      case STATE_COLLECTING_COMPLAINT_NO: response += "COLLECTING COMPLAINT NO"; break;
+      case STATE_REGISTERING_COMPLAINT: response += "REGISTERING COMPLAINT"; break;
+      case STATE_HELP_CENTER:      response += "HELP CENTER"; break;
+      case STATE_WAIT_HELP_CENTER_DTMF: response += "WAIT HELP CENTER DTMF"; break;
+      case STATE_COLLECTING_INSTALLATION_NO: response += "COLLECTING INSTALLATION NO"; break;
+      case STATE_REGISTERING_INSTALLATION: response += "REGISTERING INSTALLATION"; break;
+      case STATE_CONNECTING_CUSTOMER_CARE: response += "CONNECTING CUSTOMER CARE"; break;
+      case STATE_PLAY_REPEAT_MENU:  response += "PLAY REPEAT MENU"; break;
+      case STATE_PLAY_DISCONNECT_MESSAGE: response += "PLAY DISCONNECT MESSAGE"; break;
+      case STATE_HANGUP:           response += "HANGUP"; break;
+      case STATE_CALLBACK_DIALING: response += "CALLBACK DIALING"; break;
+      case STATE_COLLECTING_PRODUCT_NO: response += "WARRANTY INPUT"; break;
+      case STATE_AGENT_CONNECTING: response += "AGENT CONNECTING"; break;
+      case STATE_VALIDATING_SECOND_CALL: response += "VALIDATING SECOND CALL"; break;
+      case STATE_ENDED:            response += "ENDED"; break;
+      case STATE_ACTIVE_CALL:      response += "ACTIVE CALL"; break;
+      case STATE_COLLECTING_DTMF:  response += "COLLECTING DTMF"; break;
+      case STATE_PLAY_SELECTION:   response += "PLAY SELECTION"; break;
+      case STATE_RETURN_MENU:      response += "RETURN MENU"; break;
+    }
+    response += "\",";
+    
+    response += "\"callerNumber\":\"" + callerNumber + "\",";
+    response += "\"dtmfBuffer\":\"" + dtmfBuffer + "\",";
+    response += "\"lastDtmfDigit\":\"" + lastDtmfDigit + "\",";
+    response += "\"queueSize\":" + String(callbackQueue.size()) + ",";
+    if (currentCallState == STATE_ACTIVE_CALL || currentCallState == STATE_COLLECTING_DTMF) {
+      response += "\"callDuration\":" + String((millis() - callStartMillis) / 1000) + ",";
+    } else {
+      response += "\"callDuration\":0,";
+    }
+    
+    response += "\"gsm\":{";
+    response += "\"sim\":\"" + gsmSimStatus + "\",";
+    response += "\"registration\":\"" + gsmRegStatus + "\",";
+    response += "\"operator\":\"" + gsmOperator + "\",";
+    response += "\"signal\":\"" + String(gsmSignal) + "\",";
+    response += "\"battery\":\"" + String(gsmBattery) + "\",";
+    response += "\"imei\":\"" + String((gsmImei.length() > 0) ? gsmImei : "Fetching...") + "\",";
+    response += "\"network\":\"" + String((gsmRegStatus == "1" || gsmRegStatus == "5") ? "4G LTE" : "Unknown") + "\",";
+    response += "\"simNumber\":\"+919876543210\"";
+    response += "},";
+    
+    response += "\"apClients\":" + String(WiFi.softAPgetStationNum()) + ",";
+    
+    response += "\"system\":{";
+    response += "\"flashSize\":\"" + String(ESP.getFlashChipSize() / (1024 * 1024)) + " MB\",";
+    response += "\"freeHeap\":" + String(ESP.getFreeHeap()) + ",";
+    response += "\"chipRevision\":\"v" + String(ESP.getChipRevision()) + "\",";
+    response += "\"sdkVersion\":\"" + String(ESP.getSdkVersion()) + "\",";
+    response += "\"firmware\":\"" + String(FIRMWARE_VERSION) + "\",";
+    response += "\"macSta\":\"" + WiFi.macAddress() + "\",";
+    response += "\"macAp\":\"" + WiFi.softAPmacAddress() + "\",";
+    response += "\"cpuFreq\":" + String(ESP.getCpuFreqMHz()) + ",";
+    response += "\"temperature\":0.0,";
+    response += "\"socModel\":\"" + String(ESP.getChipModel()) + "\",";
+    response += "\"coreFreq\":\"" + String(ESP.getCpuFreqMHz()) + " MHz\",";
+    response += "\"minHeap\":" + String(ESP.getMinFreeHeap()) + ",";
+    response += "\"rtosTasks\":" + String(uxTaskGetNumberOfTasks());
+    response += "},";
+    
+    response += "\"sd\":{";
+    if (sdCardFound) {
+      response += "\"mounted\":true,";
+      response += "\"type\":\"" + String((myFS == &SD) ? "SD" : "SPIFFS") + "\",";
+      response += "\"totalBytes\":" + String(sdCardTotalBytes) + ",";
+      response += "\"usedBytes\":" + String(sdCardUsedBytes) + ",";
+      response += "\"fileCount\":" + String(sdCardFileCount);
+    } else {
+      response += "\"mounted\":false";
+    }
+    response += "}";
+    response += "}";
+    
     server.send(200, "application/json", response);
   });
 
@@ -2247,7 +3847,7 @@ void setupWebServer() {
       Serial2.println("ATH");
       if (currentCallState == STATE_RINGING || currentCallState == STATE_VERIFY_USER) {
         addCallLog(callerNumber, "", "Rejected");
-      } else if (currentCallState == STATE_ANSWERING || currentCallState == STATE_CALL_CONNECTED || currentCallState == STATE_PLAY_WELCOME || currentCallState == STATE_PLAY_MENU || currentCallState == STATE_WAIT_DTMF || currentCallState == STATE_PLAY_SELECTION || currentCallState == STATE_RETURN_MENU || currentCallState == STATE_HANGUP || currentCallState == STATE_COLLECTING_DTMF) {
+      } else if (currentCallState != STATE_IDLE && currentCallState != STATE_RINGING && currentCallState != STATE_CALLBACK_DIALING && currentCallState != STATE_ENDED) {
         addCallLog(callerNumber, dtmfBuffer, "Terminated");
       }
       validationResult = -1;
@@ -2294,7 +3894,52 @@ void setupWebServer() {
   server.on("/get_messages", handleGetMessages);
   server.on("/get_mobiles", handleGetMobiles);
   server.on("/get_varma_data", []() {
-    proxyGoogleSheets("getVarmaData");
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    if (currentCallState != STATE_IDLE) {
+      server.send(200, "application/json", "{}");
+      return;
+    }
+    if (sdCardFound && myFS && sdTake()) {
+      File f = myFS->open("/varma_data.json", "r");
+      if (f) {
+        // Self-healing check: read first 5 bytes to verify JSON sanity
+        char header[6] = {0};
+        int bytesRead = f.read((uint8_t*)header, 5);
+        f.seek(0); // Reset position to start of file for streaming
+        
+        bool corrupted = false;
+        if (bytesRead >= 2) {
+          // Detect multiple concatenated root objects (e.g. {}{) caused by previous append bugs
+          if (header[0] == '{' && header[1] == '}' && header[2] == '{') {
+            corrupted = true;
+          }
+          // Detect invalid non-JSON starting characters
+          else if (header[0] != '{' && header[0] != '[') {
+            corrupted = true;
+          }
+        }
+        
+        if (corrupted) {
+          f.close();
+          webLog("[LocalDB] Corrupted /varma_data.json detected. Healing with clean empty JSON.");
+          File wf = myFS->open("/varma_data.json", "w");
+          if (wf) {
+            wf.print("{}");
+            wf.close();
+          }
+          sdGive();
+          server.send(200, "application/json", "{}");
+          return;
+        }
+        
+        server.streamFile(f, "application/json");
+        f.close();
+        sdGive();
+        return;
+      }
+      sdGive();
+    }
+    server.send(200, "application/json", "{}");
   });
   server.on("/init_varma_sheets", []() {
     if (server.hasArg("sheetId")) {
@@ -2504,6 +4149,32 @@ void setupWebServer() {
     }
   });
 
+  server.on("/api/add_customer", HTTP_POST, []() {
+    String phone = server.hasArg("phone") ? server.arg("phone") : "";
+    String name = server.hasArg("name") ? server.arg("name") : "";
+    String product = server.hasArg("product") ? server.arg("product") : "";
+    String serial = server.hasArg("serial") ? server.arg("serial") : "";
+    
+    phone.trim();
+    name.trim();
+    product.trim();
+    serial.trim();
+    
+    if (phone.length() == 0 || name.length() == 0) {
+      server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Phone and Name are required\"}");
+      return;
+    }
+    
+    sdDbQueueNewCustomer(phone, name, product, serial);
+    
+    StaticJsonDocument<128> doc;
+    doc["status"] = "success";
+    doc["message"] = "Customer added locally and queued for cloud sync.";
+    String response;
+    serializeJson(doc, response);
+    server.send(200, "application/json", response);
+  });
+
   server.on("/api/get-config", HTTP_GET, []() {
     String json = "{";
     json += "\"tgToken\":\"" + tgToken + "\",";
@@ -2527,7 +4198,7 @@ void setupWebServer() {
       return;
     }
     
-    StaticJsonDocument<1536> doc;
+    DynamicJsonDocument doc(1536);
     JsonArray arr = doc.to<JsonArray>();
     for (int i = 0; i < logCount; i++) {
       int idx = (logInsertIndex - 1 - i + MAX_LOGS) % MAX_LOGS;
@@ -2636,7 +4307,7 @@ void setupWebServer() {
 
   server.on("/scan_wifi", []() {
     int n = WiFi.scanNetworks();
-    StaticJsonDocument<1024> doc;
+    DynamicJsonDocument doc(1024);
     JsonArray arr = doc.to<JsonArray>();
     for (int i = 0; i < n; ++i) {
       bool duplicate = false;
@@ -2774,15 +4445,11 @@ void setupWebServer() {
     bool formatSuccess = false;
     int cs = (sdCardCS != -1) ? sdCardCS : 5;
     
-    // 1. Write zeroes to sector 0 if card is mounted to trigger format_if_empty
+    // 1. Unmount card cleanly before format attempt.
+    // NOTE: SD.writeRAW() is not available in the standard ESP32 Arduino SD library.
+    // The format is triggered by passing format_if_empty=true to SD.begin() below.
     if (sdCardFound && myFS == &SD) {
-      uint8_t zeroBuf[512] = {0};
-      webLog("[SD] Zeroing sector 0 to force formatting...");
-      if (SD.writeRAW(zeroBuf, 0)) {
-        webLog("[SD] Sector 0 zeroed.");
-      } else {
-        webLog("[SD] writeRAW failed.");
-      }
+      webLog("[SD] Card detected. Unmounting before format...");
     }
     
     // 2. Unmount card
@@ -2928,7 +4595,7 @@ void setupWebServer() {
     
     // Write test file
     lastSdActivityMillis = millis();
-    File testFile = myFS->open("/test_write.txt", FILE_WRITE);
+    File testFile = myFS->open("/test_write.txt", "w");
     if (!testFile) {
       server.send(200, "application/json", "{\"success\":false,\"error\":\"Failed to open file for writing\"}");
       return;
@@ -3047,6 +4714,47 @@ void setupWebServer() {
     server.send(200, "application/json", "{\"success\":true}");
   }, handleFileUpload);
 
+  // Chunked file upload — accepts file data in small pieces (max ~4KB each).
+  // POST /chunk_upload?path=/index.html&offset=0&total=632926
+  // Body = raw binary chunk. Reliable for large files that overwhelm single-POST TCP buffers.
+  server.on("/chunk_upload", HTTP_POST, []() {
+    if (!sdCardFound || !myFS) {
+      server.send(503, "application/json", "{\"error\":\"SD not mounted\"}");
+      return;
+    }
+    String path   = server.hasArg("path")   ? server.arg("path")   : "";
+    long   offset = server.hasArg("offset") ? server.arg("offset").toInt() : 0;
+    long   total  = server.hasArg("total")  ? server.arg("total").toInt()  : -1;
+    if (path.length() == 0) {
+      server.send(400, "application/json", "{\"error\":\"path required\"}");
+      return;
+    }
+    if (!path.startsWith("/")) path = "/" + path;
+    // Open file: create/truncate on first chunk (offset==0), append otherwise
+    const char* mode = (offset == 0) ? "w" : "r+";
+    if (!sdTake()) {
+      server.send(503, "application/json", "{\"error\":\"SD busy\"}");
+      return;
+    }
+    File f = myFS->open(path, mode);
+    if (!f) {
+      sdGive();
+      server.send(500, "application/json", "{\"error\":\"open failed\"}");
+      return;
+    }
+    if (offset > 0) f.seek(offset);
+    String body = server.arg("plain");
+    f.print(body);
+    f.close();
+    long written = offset + (long)body.length();
+    bool done = (total >= 0 && written >= total);
+    if (done) updateSDCache();
+    sdGive();
+    lastSdActivityMillis = millis();
+    String resp = "{\"ok\":true,\"written\":" + String(written) + ",\"done\":" + String(done ? "true" : "false") + "}";
+    server.send(200, "application/json", resp);
+  });
+
   server.on("/delete_audio", HTTP_POST, []() {
     if (server.hasArg("file")) {
       String f = server.arg("file");
@@ -3118,7 +4826,7 @@ void setupWebServer() {
   server.on("/save_ivr_config", HTTP_POST, []() {
     if (server.hasArg("config")) {
       String conf = server.arg("config");
-      File f = myFS->open("/ivr_menu.json", FILE_WRITE);
+      File f = myFS->open("/ivr_menu.json", "w");
       if (f) {
         f.print(conf);
         f.close();
@@ -3158,6 +4866,7 @@ void setupWebServer() {
     doc["url"]        = otaFirmwareUrl;                // [OTA] Return URL so dashboard can show it
     doc["descriptorUrl"] = otaDescriptorUrl;
     doc["autoUpdate"] = otaAutoUpdate;                 // Return auto-update state
+    doc["source"]     = otaSource;                     // Return active update source
     String resp;
     serializeJson(doc, resp);
     server.send(200, "application/json", resp);
@@ -3173,11 +4882,25 @@ void setupWebServer() {
     String newUrl = server.arg("url");
     newUrl.trim();
     otaDescriptorUrl = newUrl;                        // Update runtime variable
+    if (server.hasArg("source")) {
+      otaSource = server.arg("source");
+      otaSource.trim();
+    }
     preferences.begin("wifi-config", false);
     preferences.putString("otaDescUrl", otaDescriptorUrl); // Persist to NVS
+    preferences.putString("otaSource", otaSource);
     preferences.end();
-    webLog("[OTA] Descriptor URL saved: " + otaDescriptorUrl);
+    webLog("[OTA] Descriptor URL saved: " + otaDescriptorUrl + " | Source: " + otaSource);
     server.send(200, "application/json", "{\"success\":true}");
+  });
+
+  // [System] POST /api/reboot — Reboots the ESP32 module.
+  server.on("/api/reboot", HTTP_POST, []() {
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    webLog("[System] Reboot requested via API. Restarting ESP32 in 2 seconds...");
+    server.send(200, "application/json", "{\"success\":true,\"message\":\"Rebooting device...\"}");
+    delay(2000);
+    ESP.restart();
   });
 
   // [OTA] POST /api/ota_auto_update — Save auto update preference.
@@ -3243,6 +4966,127 @@ void setupWebServer() {
       "{\"success\":true,\"message\":\"OTA update started. Poll /ota_status for progress.\"}");
   });
   // ==================== END OTA UPDATE ROUTES ====================
+
+  // ==================== OTA VERSION CHECK PROXY ====================
+  // Fetches version.json from GitHub server-side to bypass browser CORS
+  server.on("/api/ota_check_version", HTTP_GET, []() {
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    
+    String descUrl = otaDescriptorUrl;
+    if (otaSource == "google_sheets") {
+      descUrl = "https://script.google.com/macros/s/" + scriptId + "/exec?action=getOtaVersion&sheetId=" + sheetId;
+    }
+    // google_drive: use saved otaDescriptorUrl directly (already a drive.google.com/uc?export=download&id=... link)
+    if (server.hasArg("url")) {
+      descUrl = server.arg("url");
+      descUrl.trim();
+    }
+    
+    if (descUrl.length() == 0) {
+      server.send(400, "application/json", "{\"error\":\"No descriptor URL configured\"}");
+      return;
+    }
+    
+    if (WiFi.status() != WL_CONNECTED) {
+      server.send(503, "application/json", "{\"error\":\"WiFi not connected\"}");
+      return;
+    }
+    
+    if (!acquireSecureClientLock(15000)) { // Wait up to 15 seconds for lock
+      server.send(503, "application/json", "{\"error\":\"Secure lock busy. Try again.\" }");
+      return;
+    }
+    
+    WiFiClientSecure *secureClient = new WiFiClientSecure();
+    secureClient->setInsecure();
+    HTTPClient http;
+    
+    webLog("[OTA Check] Free heap: " + String(ESP.getFreeHeap()) + " B | Connecting to: " + descUrl);
+    if (!http.begin(*secureClient, descUrl)) {
+      server.send(500, "application/json", "{\"error\":\"Failed to connect to descriptor URL\"}");
+      delete secureClient;
+      releaseSecureClientLock();
+      return;
+    }
+    
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    http.setTimeout(15000);
+    int httpCode = http.GET();
+    
+    if (httpCode == HTTP_CODE_OK) {
+      String payload = http.getString();
+      // Add currentVersion field to the response
+      StaticJsonDocument<512> doc;
+      DeserializationError err = deserializeJson(doc, payload);
+      if (!err) {
+        doc["currentVersion"] = FIRMWARE_VERSION;
+        String resp;
+        serializeJson(doc, resp);
+        server.send(200, "application/json", resp);
+      } else {
+        server.send(500, "application/json", "{\"error\":\"Invalid JSON from descriptor\"}");
+      }
+    } else {
+      char sslErr[100] = {0};
+      secureClient->lastError(sslErr, sizeof(sslErr));
+      webLog("[OTA Check] HTTP Code: " + String(httpCode) + " | SSL error: " + String(sslErr));
+      server.send(502, "application/json", "{\"error\":\"HTTP " + String(httpCode) + " from descriptor URL. SSL Error: " + String(sslErr) + "\"}");
+    }
+    http.end();
+    delete secureClient;
+    releaseSecureClientLock();
+  });
+
+  // ==================== LOCAL DB SYNC ROUTES ====================
+  server.on("/api/sync_status", HTTP_GET, []() {
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    
+    unsigned long nextSyncIn = 0;
+    if (lastPeriodicSyncMillis > 0) {
+      unsigned long elapsed = millis() - lastPeriodicSyncMillis;
+      if (elapsed < syncIntervalMs) {
+        nextSyncIn = (syncIntervalMs - elapsed) / 1000;
+      }
+    }
+    
+    StaticJsonDocument<256> doc;
+    doc["lastSync"] = lastSyncTimeStr;
+    doc["customerCount"] = localCustomerCount;
+    doc["intervalMs"] = syncIntervalMs;
+    doc["nextSyncIn"] = nextSyncIn;
+    doc["syncErrors"] = localDbSyncErrors;
+    doc["syncRunning"] = manualSyncRunning;
+    String resp;
+    serializeJson(doc, resp);
+    server.send(200, "application/json", resp);
+  });
+
+  server.on("/api/sync_now", HTTP_POST, []() {
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    triggerManualSync();
+    server.send(200, "application/json", "{\"success\":true,\"message\":\"Manual sync triggered.\"}");
+  });
+
+  server.on("/api/sync_interval", HTTP_POST, []() {
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    if (!server.hasArg("interval")) {
+      server.send(400, "application/json", "{\"error\":\"Missing interval parameter\"}");
+      return;
+    }
+    unsigned long newInterval = server.arg("interval").toInt();
+    if (newInterval < 60000) newInterval = 60000;     // Minimum 1 minute
+    if (newInterval > 3600000) newInterval = 3600000;  // Maximum 1 hour
+    syncIntervalMs = newInterval;
+    
+    // Persist to NVS
+    preferences.begin("wifi-config", false);
+    preferences.putULong("syncInterval", syncIntervalMs);
+    preferences.end();
+    
+    webLog("[SyncConfig] Interval updated to " + String(syncIntervalMs / 1000) + " seconds.");
+    server.send(200, "application/json", "{\"success\":true,\"intervalMs\":" + String(syncIntervalMs) + "}");
+  });
+  // ==================== END LOCAL DB SYNC ROUTES ====================
 
   server.onNotFound([]() {
     if (currentSystemState == SYSTEM_WIFI_CONFIG) {
@@ -3396,60 +5240,75 @@ bool isNewerVersion(String remoteVer, String localVer) {
 void otaAutoCheckTask(void* pvParameters) {
   webLog("[OTA AUTO] Checking for updates at boot...");
   
-  if (otaDescriptorUrl.length() == 0) {
+  String descUrl = otaDescriptorUrl;
+  if (otaSource == "google_sheets") {
+    descUrl = "https://script.google.com/macros/s/" + scriptId + "/exec?action=getOtaVersion&sheetId=" + sheetId;
+  }
+  // google_drive: use saved otaDescriptorUrl directly (already a drive.google.com/uc?export=download&id=... link)
+  
+  if (descUrl.length() == 0) {
     webLog("[OTA AUTO] Descriptor URL is empty. Aborting auto-update.");
     vTaskDelete(NULL);
     return;
   }
   
-  // Wait 15s for network interfaces to fully stabilize and web server to start accepting requests
-  // before making any HTTPS calls that could compete for memory
-  vTaskDelay(pdMS_TO_TICKS(15000));
+  // Wait 120 seconds for GSM module network registration and interfaces to fully stabilize first
+  vTaskDelay(pdMS_TO_TICKS(120000));
   
   { // Inner block to destruct C++ objects before FreeRTOS task deletion
-    WiFiClientSecure secureClient;
-    secureClient.setInsecure();
-    
-    HTTPClient http;
-    bool begun = http.begin(secureClient, otaDescriptorUrl);
-    if (!begun) {
-      webLog("[OTA AUTO] Failed to connect to version descriptor URL.");
-      vTaskDelete(NULL);
-      return;
-    }
-
-    int httpCode = http.GET();
-    if (httpCode == HTTP_CODE_OK) {
-      String payload = http.getString();
-      StaticJsonDocument<512> doc;
-      DeserializationError error = deserializeJson(doc, payload);
+    if (acquireSecureClientLock(15000)) { // Wait up to 15 seconds for lock
+      WiFiClientSecure *secureClient = new WiFiClientSecure();
+      secureClient->setInsecure();
       
-      if (!error) {
-        const char* newVersion = doc["version"];
-        const char* binUrl = doc["url"];
+      HTTPClient http;
+      bool begun = http.begin(*secureClient, descUrl);
+      if (!begun) {
+        webLog("[OTA AUTO] Failed to connect to version descriptor URL.");
+        delete secureClient;
+        releaseSecureClientLock();
+        vTaskDelete(NULL);
+        return;
+      }
+
+      int httpCode = http.GET();
+      if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+        StaticJsonDocument<512> doc;
+        DeserializationError error = deserializeJson(doc, payload);
         
-        if (newVersion && binUrl && isNewerVersion(String(newVersion), String(FIRMWARE_VERSION))) {
-          webLog("[OTA AUTO] New version found: " + String(newVersion) + " (current: " + FIRMWARE_VERSION + ")");
-          webLog("[OTA AUTO] Starting auto-update from: " + String(binUrl));
+        if (!error) {
+          const char* newVersion = doc["version"];
+          const char* binUrl = doc["url"];
           
-          // Save URL to otaFirmwareUrl and trigger update
-          otaFirmwareUrl = String(binUrl);
-          preferences.begin("wifi-config", false);
-          preferences.putString("otaUrl", otaFirmwareUrl);
-          preferences.end();
-          
-          triggerOtaUpdate();
+          if (newVersion && binUrl && isNewerVersion(String(newVersion), String(FIRMWARE_VERSION))) {
+            webLog("[OTA AUTO] New version found: " + String(newVersion) + " (current: " + FIRMWARE_VERSION + ")");
+            webLog("[OTA AUTO] Starting auto-update from: " + String(binUrl));
+            
+            // Save URL to otaFirmwareUrl and trigger update
+            otaFirmwareUrl = String(binUrl);
+            preferences.begin("wifi-config", false);
+            preferences.putString("otaUrl", otaFirmwareUrl);
+            preferences.end();
+            
+            triggerOtaUpdate();
+          } else {
+            webLog("[OTA AUTO] Firmware is up-to-date.");
+          }
         } else {
-          webLog("[OTA AUTO] Firmware is up-to-date.");
+          webLog("[OTA AUTO] Failed to parse version JSON descriptor.");
         }
       } else {
-        webLog("[OTA AUTO] Failed to parse version JSON descriptor.");
+        char sslErr[100] = {0};
+        secureClient->lastError(sslErr, sizeof(sslErr));
+        webLog("[OTA AUTO] Failed to fetch version descriptor, HTTP Code: " + String(httpCode) + " | SSL error: " + String(sslErr));
       }
+      
+      http.end();
+      delete secureClient;
+      releaseSecureClientLock();
     } else {
-      webLog("[OTA AUTO] Failed to fetch version descriptor, HTTP Code: " + String(httpCode));
+      webLog("[OTA AUTO] Skipped: secure client lock busy.");
     }
-    
-    http.end();
   }
   vTaskDelete(NULL);
 }
@@ -3507,6 +5366,7 @@ void initializeGSM(bool isBoot = false) {
   if (gsmModuleConnected) {
     sendATCommand("AT+CSCLK=0", "OK", 1000); // Disable slow clock / sleep mode on GSM
     sendATCommand("AT+CPSMS=0", "OK", 1000); // Disable Power Saving Mode (PSM) on LTE
+    // sendATCommand("AT+CNMP=2",  "OK", 1000); // Set network mode to Automatic (allows smooth GSM/LTE fallback)
     sendATCommand("ATS0=0",    "OK", 1000); // Disable hardware auto-answer
     sendATCommand("AT+CMEE=1", "OK", 1000); // Enable numeric error reporting
     sendATCommand("AT+CLIP=1", "OK", 1000); // Enable caller ID
@@ -3549,8 +5409,8 @@ void updateLedIndicators() {
   // ─── SD Card Status LED indicator logic ───
   bool isSdActive = (audioPlaying || (now - lastSdActivityMillis < 500));
   if (!sdCardFound || sdCardUnsupportedFS) {
-    // SD Card error or not inserted -> blink slowly (500ms on, 500ms off)
-    digitalWrite(LED_SD_STATUS, (ledBlinkCounter % 10 < 5) ? HIGH : LOW);
+    // SD Card error or not inserted -> Blue LED OFF
+    digitalWrite(LED_SD_STATUS, LOW);
   } else if (isSdActive) {
     // SD Card active (playing audio or file traffic) -> blink rapidly (100ms on, 100ms off)
     digitalWrite(LED_SD_STATUS, (ledBlinkCounter % 2 == 0) ? HIGH : LOW);
@@ -3572,51 +5432,37 @@ void updateLedIndicators() {
     return;
   }
 
-  // 2. Active call states (Green LED blinks, Onboard LED stays solid HIGH as power light)
-  if (currentCallState == STATE_ANSWERING || 
-      currentCallState == STATE_CALL_CONNECTED ||
-      currentCallState == STATE_PLAY_WELCOME || 
-      currentCallState == STATE_PLAY_MENU || 
-      currentCallState == STATE_WAIT_DTMF || 
-      currentCallState == STATE_PLAY_SELECTION || 
-      currentCallState == STATE_RETURN_MENU ||
-      currentCallState == STATE_HANGUP || 
-      currentCallState == STATE_CALLBACK_DIALING ||
-      currentCallState == STATE_COLLECTING_PRODUCT_NO ||
-      currentCallState == STATE_AGENT_CONNECTING) {
+  // 2. Active call/ringing/verifying states
+  // Green LED blinks, Red LED stays OFF
+  if (currentCallState != STATE_IDLE && currentCallState != STATE_ENDED) {
     digitalWrite(LED_GREEN, (ledBlinkCounter % 10 < 5) ? HIGH : LOW); // Green blinks
-    digitalWrite(LED_PIN, HIGH); // Onboard LED stays ON
+    digitalWrite(LED_PIN, LOW); // Red stays OFF during call activities
     return;
   }
 
-  // 3. Ringing or Validating states (Onboard LED blinks rapidly, Green LED off)
-  if (currentCallState == STATE_RINGING || currentCallState == STATE_VERIFY_USER || currentCallState == STATE_VALIDATING_SECOND_CALL) {
-    digitalWrite(LED_GREEN, LOW);
-    digitalWrite(LED_PIN, (ledBlinkCounter % 2 == 0) ? HIGH : LOW);
-    return;
-  }
-
-  // 4. Idle state status indicators
+  // 3. Idle state status indicators
   if (!gsmModuleConnected) {
-    // No GSM module with ESP -> blink Onboard LED rapidly
+    // GSM not connected / offline -> Red LED steady ON, Green LED OFF
     digitalWrite(LED_GREEN, LOW);
-    digitalWrite(LED_PIN, (ledBlinkCounter % 2 == 0) ? HIGH : LOW);
+    digitalWrite(LED_PIN, HIGH);
   } else {
     bool gsmRegistered = (gsmRegStatus == "1" || gsmRegStatus == "5");
 
     if (gsmRegistered) {
-      // SIM registered -> Green LED steady (solid HIGH), Onboard LED solid HIGH as power light
+      // Perfect tower -> Green LED steady (solid HIGH), Red LED OFF
       digitalWrite(LED_GREEN, HIGH);
-      digitalWrite(LED_PIN, HIGH);
+      digitalWrite(LED_PIN, LOW);
     } else {
-      // Cellular Error -> Green LED blinks, Onboard LED solid HIGH as power light
-      digitalWrite(LED_GREEN, (ledBlinkCounter % 10 < 5) ? HIGH : LOW);
-      digitalWrite(LED_PIN, HIGH);
+      // GSM connected but no tower/network (cellular error) -> Green LED OFF, Red LED blinks
+      digitalWrite(LED_GREEN, LOW);
+      digitalWrite(LED_PIN, (ledBlinkCounter % 10 < 5) ? HIGH : LOW);
     }
   }
 }
 
 void listSDFiles(File dir, int numTabs = 0) {
+#if ENABLE_DEBUG_SERIAL
+  if (!Serial || Serial.availableForWrite() < 64) return;
   File file = dir.openNextFile();
   while (file) {
     for (int i = 0; i < numTabs; i++) { Serial.print("  "); }
@@ -3631,12 +5477,20 @@ void listSDFiles(File dir, int numTabs = 0) {
     file.close();
     file = dir.openNextFile();
   }
+#endif
 }
 
 // ==================== SYSTEM MAIN ====================
 void setup() {
-  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // Disable brownout detector to prevent resets during GSM power spikes
+  // Disable brownout detector early to prevent boot loops on weak power supplies
+  #if defined(ESP32)
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+  #endif
+
+  #if ENABLE_DEBUG_SERIAL
   Serial.begin(115200);
+  Serial.setTimeout(10);
+  #endif
   esp_log_level_set("*", ESP_LOG_WARN);      // Set global ESP-IDF log level to WARNING to prevent excessive stack usage
   esp_log_level_set("mdns", ESP_LOG_NONE);   // Turn off mDNS logs completely
   logMutex = xSemaphoreCreateMutex();
@@ -3654,7 +5508,11 @@ void setup() {
   digitalWrite(LED_PIN, HIGH);
   digitalWrite(LED_GREEN, HIGH);
   digitalWrite(LED_SD_STATUS, HIGH);
-  Serial.println("[BOOT] LEDs ON — initializing SD card first...");
+#if ENABLE_DEBUG_SERIAL
+  if (Serial && Serial.availableForWrite() > 64) {
+    Serial.println("[BOOT] LEDs ON — initializing SD card first...");
+  }
+#endif
 
   // Fetch local MAC Address ID directly from ESP32 eFuse hardware MAC register
   uint8_t baseMac[6];
@@ -3688,26 +5546,23 @@ void setup() {
         uint64_t tot = SD.totalBytes();
         if (tot > 0) { // Validate — a real card must have storage
           webLog("SD Card Mount OK: CS=" + String(cs) + " Total=" + String(tot / 1048576) + "MB");
-          {
+#if ENABLE_DEBUG_SERIAL
+          if (Serial && Serial.availableForWrite() > 64) {
             File root = SD.open("/");
             Serial.println("--- SD Card Files ---");
-            listSDFiles(root);
+            // listSDFiles(root); // Commented out to prevent stack/heap overflow
             Serial.println("---------------------");
             root.close();
           }
+#endif
           myFS = &SD;
           sdCardFound = true;
           sdCardCS = cs;
           sdCardTotalBytes = tot;
-          sdCardUsedBytes = SD.usedBytes();
-          sdCardSectorSize = SD.cardSize() > 0 ? 512 : 0; // Standard sector size
-          sdCardNumSectors = SD.cardSize();  // cardSize() returns numSectors on ESP32 SD lib
-          // Determine card type string
-          uint8_t ctype = SD.cardType();
-          if      (ctype == CARD_MMC)  sdCardCardType = "MMC";
-          else if (ctype == CARD_SD)   sdCardCardType = "SD";
-          else if (ctype == CARD_SDHC) sdCardCardType = "SDHC";
-          else                          sdCardCardType = "UNKNOWN";
+          sdCardUsedBytes = 0; // Skip slow FAT scan on boot to prevent boot hangs
+          sdCardSectorSize = 512; // Default standard sector size
+          sdCardNumSectors = tot / 512; // Estimate from total bytes to avoid cardSize() hang
+          sdCardCardType = "SD"; // Default type to avoid cardType() hang
           sdMounted = true;
         } else {
           webLog("SD mounted but totalBytes=0 — likely SPIFFS bleeding through, rejecting.");
@@ -3735,8 +5590,10 @@ void setup() {
     }
   }
 
+  webLog("[BOOT] Skipping updateSDCache...");
   // Populate dynamic storage specs cache
-  updateSDCache();
+  // updateSDCache();
+  webLog("[BOOT] updateSDCache skipped");
 
   // Reset indicator LEDs to prepare for GSM boot sequence
   digitalWrite(LED_PIN, LOW);
@@ -3745,6 +5602,7 @@ void setup() {
 
   // Power-on/wait for SIM A7670C module
   if (GSM_PWRKEY_PIN != -1) {
+    webLog("[BOOT] Powering GSM via PWRKEY pin...");
     pinMode(GSM_PWRKEY_PIN, OUTPUT);
     digitalWrite(GSM_PWRKEY_PIN, HIGH);
     delay(100);
@@ -3752,6 +5610,7 @@ void setup() {
     delay(2000);
     pinMode(GSM_PWRKEY_PIN, INPUT); // Set to high-impedance to release PWRKEY
   } else {
+    webLog("[BOOT] Standalone auto power-on, waiting 12s for GSM boot...");
     // Blink Green LED during 12s GSM boot wait so board doesn't look dead
     for (int i = 0; i < 24; i++) {
       digitalWrite(LED_GREEN, (i % 2 == 0) ? HIGH : LOW);
@@ -3764,13 +5623,17 @@ void setup() {
   digitalWrite(LED_GREEN, LOW);
   digitalWrite(LED_SD_STATUS, LOW);
 
+  webLog("[BOOT] Calling ensureIvrMenuJson...");
   // Ensure ivr_menu.json exists and is configured as requested
   ensureIvrMenuJson();
+  webLog("[BOOT] ensureIvrMenuJson done");
 
   // Initialize GSM Serial2 Communication (GPIO16=RX, GPIO17=TX)
   Serial2.setRxBufferSize(1024);
   Serial2.begin(GSM_BAUD, SERIAL_8N1, GSM_RX_PIN, GSM_TX_PIN);
+  webLog("[BOOT] Calling initializeGSM...");
   initializeGSM(true);
+  webLog("[BOOT] initializeGSM done");
 
   // Initialize MAX98357A I2S Audio (BCLK=27, LRC=26, DIN=14)
   // Called AFTER GSM init and NVS load so that:
@@ -3837,37 +5700,40 @@ void setup() {
   if (!isPrintableASCII(testPhoneNumber)) testPhoneNumber = "";
   testSmsTemplate = preferences.getString("testSmsTmp", "Dear customer, you called but did not select any options. Thank you for calling V-Varma. Website: vvarma.gsvee.in");
   if (!isPrintableASCII(testSmsTemplate)) testSmsTemplate = "Dear customer, you called but did not select any options. Thank you for calling V-Varma. Website: vvarma.gsvee.in";
-  
   otaFirmwareUrl  = preferences.getString("otaUrl", "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/firmware.bin");
   if (!isPrintableASCII(otaFirmwareUrl)) otaFirmwareUrl = "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/firmware.bin";
   otaDescriptorUrl = preferences.getString("otaDescUrl", "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/version.json");
   if (!isPrintableASCII(otaDescriptorUrl)) otaDescriptorUrl = "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/version.json";
   otaAutoUpdate   = preferences.getBool("otaAuto", true);
+  otaSource       = preferences.getString("otaSource", "github");
+  if (!isPrintableASCII(otaSource)) otaSource = "github";
+  // Load sync interval from NVS
+  syncIntervalMs = preferences.getULong("syncInterval", 1800000);
+  if (syncIntervalMs < 60000) syncIntervalMs = 60000;
+  if (syncIntervalMs > 3600000) syncIntervalMs = 3600000;
 
   preferences.end();
 
+  // Load local customer DB from SD card
+  loadCustomersFromSD();
+  
+  // Ensure /db directory exists for local SD database (call logs, SMS logs, complaints queue)
+  sdDbEnsureDirectories();
+
   if (savedSSID.length() > 0) {
-    // ── DUAL MODE (AP+STA) ── Credentials exist: connect to router and run AP hotspot ──
-    webLog("[WiFi] Credentials found. Booting in AP+STA dual mode.");
+    // ── STA-ONLY MODE ── Credentials exist: connect to router, do NOT run AP hotspot ──
+    webLog("[WiFi] Credentials found. Booting in STA-only mode.");
     webLog("[HEAP] Before WiFi.mode. Free heap: " + String(ESP.getFreeHeap()) + " bytes");
     
     WiFi.disconnect(true, true);
     WiFi.mode(WIFI_OFF);
     delay(200);
-    WiFi.mode(WIFI_AP_STA);   // AP+STA Dual Mode — both AP hotspot and STA router connection
+    WiFi.mode(WIFI_STA);   // STA-only mode
     delay(100);
     WiFi.setHostname(DEVICE_NAME);
     WiFi.setAutoReconnect(true);
-    WiFi.setSleep(false);  // Disable WiFi power saving to prevent latency/disconnects
-    
-    // Start AP hotspot
-    startSoftAPWithLog(savedApSSID, savedApPass);
-    delay(100);
-    IPAddress apIP = WiFi.softAPIP();
-    
-    // Start DNS server for captive portal requests on AP interface
-    dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
-    dnsServer.start(53, "*", apIP);
+    WiFi.setSleep(false);  // MUST be off: power-save mode causes the radio to sleep between beacons,
+                           // which drops incoming TCP SYN packets and makes the web server unreachable.
     
     WiFi.begin(savedSSID.c_str(), savedPass.c_str());
     webLog("[WiFi] Connecting to router SSID: '" + savedSSID + "'...");
@@ -3877,10 +5743,8 @@ void setup() {
     // Set asynchronous connection tracker
     wifiConnectStartMillis = millis();
     wifiConnecting = true;
-    currentSystemState = SYSTEM_RUNNING;  // Dashboard accessible immediately via AP hotspot
+    currentSystemState = SYSTEM_RUNNING;
     
-    // mDNS is intentionally NOT started here — STA WiFi is still connecting and has no IP yet.
-    // Starting mDNS before IP assignment broadcasts the WRONG IP and corrupts client caches.
     // mDNS will be started automatically from loop() once the STA IP is confirmed (see WiFi monitor).
   } else {
     // ── AP-ONLY MODE ── No credentials: open hotspot for initial Wi-Fi setup ──
@@ -3894,87 +5758,112 @@ void setup() {
 }
 
 void handleSerialUpload() {
-  if (Serial.available() > 0) {
-    String cmd = Serial.readStringUntil('\n');
-    cmd.trim();
-    if (cmd.startsWith("UPLOAD:")) {
-      int firstColon = cmd.indexOf(':');
-      int secondColon = cmd.indexOf(':', firstColon + 1);
-      if (firstColon != -1 && secondColon != -1) {
-        String path = cmd.substring(firstColon + 1, secondColon);
-        String sizeStr = cmd.substring(secondColon + 1);
-        long fileSize = sizeStr.toInt();
-        
-        serialUploadActive = true;
-        
-        webLog("[SerialUpload] Uploading " + path + " (" + String(fileSize) + " bytes)");
-        mp3Stop();
-        delay(200);
-        
-        fs::FS &fs = *myFS;
-        int slashIdx = path.lastIndexOf('/');
-        if (slashIdx > 0) {
-          String dirPath = path.substring(0, slashIdx);
-          if (!fs.exists(dirPath)) {
-            fs.mkdir(dirPath);
-          }
-        }
-        
-        File f = fs.open(path, FILE_WRITE);
-        if (!f) {
-          Serial.println("ERROR: Open Failed");
-          serialUploadActive = false;
-          return;
-        }
-        
-        Serial.println("READY");
-        Serial.flush();
-        
-        long bytesRead = 0;
-        unsigned long lastByteMillis = millis();
-        uint8_t buffer[256];
-        
-        while (bytesRead < fileSize && (millis() - lastByteMillis < 10000)) {
-          int targetChunkSize = (fileSize - bytesRead < 256) ? (fileSize - bytesRead) : 256;
-          int chunkBytesRead = 0;
-          while (chunkBytesRead < targetChunkSize && (millis() - lastByteMillis < 10000)) {
-            if (Serial.available() > 0) {
-              int toRead = Serial.available();
-              if (toRead > (targetChunkSize - chunkBytesRead)) toRead = targetChunkSize - chunkBytesRead;
-              int r = Serial.readBytes(buffer + chunkBytesRead, toRead);
-              if (r > 0) {
-                chunkBytesRead += r;
-                lastByteMillis = millis();
-              }
+#if ENABLE_DEBUG_SERIAL
+  if (!Serial || Serial.availableForWrite() < 64) return;
+  static String serialCmdBuffer = "";
+  int limit = 20; // Limit processing to 20 characters per loop to prevent starvation from noise
+  while (Serial.available() > 0 && limit-- > 0) {
+    char c = Serial.read();
+    if (c == '\n') {
+      serialCmdBuffer.trim();
+      if (serialCmdBuffer.startsWith("UPLOAD:")) {
+        int firstColon = serialCmdBuffer.indexOf(':');
+        int secondColon = serialCmdBuffer.indexOf(':', firstColon + 1);
+        if (firstColon != -1 && secondColon != -1) {
+          String path = serialCmdBuffer.substring(firstColon + 1, secondColon);
+          String sizeStr = serialCmdBuffer.substring(secondColon + 1);
+          long fileSize = sizeStr.toInt();
+          
+          serialUploadActive = true;
+          
+          webLog("[SerialUpload] Uploading " + path + " (" + String(fileSize) + " bytes)");
+          mp3Stop();
+          delay(200);
+          
+          fs::FS &fs = *myFS;
+          int slashIdx = path.lastIndexOf('/');
+          if (slashIdx > 0) {
+            String dirPath = path.substring(0, slashIdx);
+            if (!fs.exists(dirPath)) {
+              fs.mkdir(dirPath);
             }
-            yield();
           }
-          if (chunkBytesRead > 0) {
-            f.write(buffer, chunkBytesRead);
-            bytesRead += chunkBytesRead;
-            Serial.write(0x06);
-            Serial.flush();
+          
+          File f = fs.open(path, "w");
+          if (!f) {
+            Serial.println("ERROR: Open Failed");
+            serialUploadActive = false;
+            serialCmdBuffer = "";
+            return;
           }
+          
+          Serial.println("READY");
+          Serial.flush();
+          
+          long bytesRead = 0;
+          unsigned long lastByteMillis = millis();
+          uint8_t buffer[256];
+          
+          while (bytesRead < fileSize && (millis() - lastByteMillis < 10000)) {
+            int targetChunkSize = (fileSize - bytesRead < 256) ? (fileSize - bytesRead) : 256;
+            int chunkBytesRead = 0;
+            while (chunkBytesRead < targetChunkSize && (millis() - lastByteMillis < 10000)) {
+              if (Serial.available() > 0) {
+                int toRead = Serial.available();
+                if (toRead > (targetChunkSize - chunkBytesRead)) toRead = targetChunkSize - chunkBytesRead;
+                int r = Serial.readBytes(buffer + chunkBytesRead, toRead);
+                if (r > 0) {
+                  chunkBytesRead += r;
+                  lastByteMillis = millis();
+                }
+              }
+              yield();
+            }
+            if (chunkBytesRead > 0) {
+              f.write(buffer, chunkBytesRead);
+              bytesRead += chunkBytesRead;
+              Serial.write(0x06);
+              Serial.flush();
+            }
+          }
+          
+          f.close();
+          if (bytesRead == fileSize) {
+            Serial.println("SUCCESS");
+            webLog("[SerialUpload] Successfully wrote " + String(bytesRead) + " bytes to " + path);
+          } else {
+            Serial.println("ERROR: Timeout/Size Mismatch");
+            fs.remove(path);
+          }
+          
+          serialUploadActive = false;
         }
-        
-        f.close();
-        if (bytesRead == fileSize) {
-          Serial.println("SUCCESS");
-          webLog("[SerialUpload] Successfully wrote " + String(bytesRead) + " bytes to " + path);
-        } else {
-          Serial.println("ERROR: Timeout/Size Mismatch");
-          fs.remove(path);
-        }
-        
-        serialUploadActive = false;
+      }
+      serialCmdBuffer = "";
+    } else if (c != '\r') {
+      serialCmdBuffer += c;
+      if (serialCmdBuffer.length() > 512) {
+        serialCmdBuffer = "";
       }
     }
   }
+#endif
 }
 
 void loop() {
   handleSerialUpload();
   updateLedIndicators();
+
+  // 3-second delay check for welcome menu option 01/002 play
+  if (pending01002Play && (millis() - pending01002DelayStart > 3000)) {
+    pending01002Play = false;
+    webLog("[New IVR] 3-second delay complete. Playing main menu /01/002...");
+    currentAudioFolder = 1;
+    currentAudioTrack = 2; // Play /01/002
+    changeState(STATE_PLAY_MENU);
+    mp3Play(currentAudioFolder, currentAudioTrack);
+    lastAudioPlayMillis = millis();
+  }
 
   // Handle initial connection timeout (only if still trying to connect for the first time)
   if (wifiConnecting && (millis() - wifiConnectStartMillis > 60000)) {
@@ -4068,6 +5957,9 @@ void loop() {
         // Core=0: WiFi runs here, keeps Core 1 (loop/server.handleClient) fully free
         xTaskCreatePinnedToCore(otaAutoCheckTask, "ota_auto_task", 16384, NULL, 0, NULL, 0);
       }
+
+      // Start periodic Google Sheets sync for local customer DB
+      startPeriodicSync();
     } else {
       webLog("[WiFi] STA IP cleared.");
     }
@@ -4096,9 +5988,9 @@ void loop() {
     lastApClientsCount = currentApClientsCount;
   }
 
-  // 4. Non-blocking GSM Query Scheduler — 5 steps, each fires every 5s
+  // 4. Non-blocking GSM Query Scheduler — 5 steps, each fires every 25s
   // CREG and CEREG are in SEPARATE steps to avoid response collision
-  if (gsmModuleConnected && currentCallState == STATE_IDLE && (millis() - gsmQueryTimer > 5000)) {
+  if (gsmModuleConnected && currentCallState == STATE_IDLE && (millis() - gsmQueryTimer > 25000)) {
     gsmQueryTimer = millis();
     
     switch(gsmQueryStep) {
@@ -4180,7 +6072,7 @@ void loop() {
       changeState(STATE_CALL_CONNECTED);
     } else {
       webLog("Failed to physically answer call (ATA failed).");
-      Serial2.println("ATH");
+      hangupCall();
       addCallLog(callerNumber, "", "Answer Failed");
       changeState(STATE_ENDED);
     }
@@ -4198,274 +6090,224 @@ void loop() {
           lastAudioPlayMillis = millis();
         }
       }
-    } else if (ivrSelectedLanguage == 0) {
-      // Language selection phase
-      webLog("Language not selected yet. Playing Language Selection Menu...");
-      currentAudioFolder = 4;
-      currentAudioTrack = 2; // Language menu `/04/002.wav`
-      changeState(STATE_PLAY_MENU);
-      mp3Play(currentAudioFolder, currentAudioTrack);
-      lastAudioPlayMillis = millis();
-    } else if (validationResult == -1 || (millis() - validationHoldStart < 4000)) {
-      // Still checking with Google Sheets OR we haven't played the hold audio for 4 seconds yet, wait...
-      if (checkAudioFinished()) {
-        webLog("Looping validation audio in language: " + String(ivrSelectedLanguage));
-        if (ivrSelectedLanguage == 2) {
-          mp3Play(4, 8); // Tamil hold /04/008.wav
-        } else if (ivrSelectedLanguage == 3) {
-          mp3Play(4, 11); // Hindi hold /04/011.wav
-        } else {
-          mp3Play(4, 1); // English hold /04/001.wav
-        }
-        lastAudioPlayMillis = millis();
-      }
-      if (millis() - callStartMillis > 20000 && validationResult == -1) {
-        webLog("Validation timeout during active call. Defaulting to unregistered.");
-        validationResult = 0;
-      }
-    } else {
-      // Validation completed!
-      if (validationResult == 1) {
-        callerIsRegistered = true;
-        webLog("Caller verified as registered. Playing customer greeting...");
-        if (ivrSelectedLanguage == 2) {
-          currentAudioFolder = 4;
-          currentAudioTrack = 9; // Tamil welcome + menu /04/009.wav
-        } else if (ivrSelectedLanguage == 3) {
-          currentAudioFolder = 4;
-          currentAudioTrack = 12; // Hindi welcome + menu /04/012.wav
-        } else {
-          currentAudioFolder = 4;
-          currentAudioTrack = 3; // English welcome + menu /04/003.wav
-        }
-        changeState(STATE_PLAY_WELCOME);
-        mp3Play(currentAudioFolder, currentAudioTrack);
-        lastAudioPlayMillis = millis();
-        lastActivityTime = millis();
-        validationResult = -1; // Reset validation result
-      } else {
-        callerIsRegistered = false;
-        webLog("Caller is unregistered. Playing warning message before disconnect...");
-        if (ivrSelectedLanguage == 2) {
-          currentAudioFolder = 4;
-          currentAudioTrack = 10; // Tamil warning /04/010.wav
-        } else if (ivrSelectedLanguage == 3) {
-          currentAudioFolder = 4;
-          currentAudioTrack = 13; // Hindi warning /04/013.wav
-        } else {
-          currentAudioFolder = 4;
-          currentAudioTrack = 6; // English warning /04/006.wav
-        }
-        changeState(STATE_PLAY_SELECTION);
-        mp3Play(currentAudioFolder, currentAudioTrack);
-        lastAudioPlayMillis = millis();
-        validationResult = -1; // Reset validation result
-        
-        // Send notification SMS in background
-        String msg = "";
-        if (ivrSelectedLanguage == 2) {
-          msg = "அன்புள்ள வாடிக்கையாளரே, நீங்கள் பதிவுசெய்யப்பட்ட பயனர் இல்லை. பதிவு செய்ய, 9092610415 என்ற எண்ணில் வி-வர்மா நிர்வாகியைத் தொடர்பு கொள்ளவும்.";
-        } else if (ivrSelectedLanguage == 3) {
-          msg = "प्रिय ग्राहक, आप एक पंजीकृत उपयोगकर्ता नहीं हैं। पंजीकरण के लिए, कृपया 9092610415 पर वी-वर्मा प्रशासक से संपर्क करें।";
-        } else {
-          msg = "Dear customer, you are not a registered user. To register, please contact V-Varma administrator at 9092610415.";
-        }
-        sendSMS(callerNumber, msg);
-        addSmsLog(callerNumber, msg, "Outgoing", "Sent");
-      }
     }
   }
 
-  // 5.6 Welcome Message Completion Checker (Customer Greeting)
+  // 5.7 Welcome Audio Completion Checker
   if (currentCallState == STATE_PLAY_WELCOME) {
     if (checkAudioFinished()) {
-      webLog("Customer greeting finished. Transitioning directly to STATE_WAIT_DTMF...");
-      changeState(STATE_WAIT_DTMF);
+      webLog("Welcome audio finished. Transitioning to STATE_WAIT_LANGUAGE_DTMF...");
+      changeState(STATE_WAIT_LANGUAGE_DTMF);
       lastActivityTime = millis();
     }
   }
 
-  // 5.7 Main Menu Completion Checker
+  // 5.75 Welcome Language Selection Timeout Handler
+  if (currentCallState == STATE_WAIT_LANGUAGE_DTMF) {
+    if (millis() - lastActivityTime > 5000) {
+      playCount01001++;
+      if (playCount01001 >= 2) {
+        webLog("[IVR Welcome] Language selection max timeouts reached. Playing default disconnect.");
+        currentAudioFolder = 2; // Default to English (2)
+        mp3Stop();
+        delay(100);
+        currentAudioTrack = 4; // Play English /02/004.wav
+        mp3Play(currentAudioFolder, currentAudioTrack);
+        lastAudioPlayMillis = millis();
+        changeState(STATE_PLAY_DISCONNECT_MESSAGE);
+      } else {
+        webLog("[IVR Welcome] Replaying welcome menu...");
+        mp3Stop();
+        delay(100);
+        currentAudioFolder = 1;
+        currentAudioTrack = 1; // Play /01/001.wav again
+        mp3Play(currentAudioFolder, currentAudioTrack);
+        lastAudioPlayMillis = millis();
+        changeState(STATE_PLAY_WELCOME);
+      }
+    }
+  }
+
+  // 5.76 User Verification Completion Checker
+  if (currentCallState == STATE_VERIFY_USER) {
+    if (checkAudioFinished()) {
+      if (validationResult == 1) {
+        webLog("[IVR Verification] Success. Transitioning to STATE_PLAY_VERIFICATION_SUCCESS...");
+        mp3Stop();
+        delay(100);
+        currentAudioTrack = 3; // /XX/003.wav
+        mp3Play(currentAudioFolder, currentAudioTrack);
+        lastAudioPlayMillis = millis();
+        changeState(STATE_PLAY_VERIFICATION_SUCCESS);
+      } else if (validationResult == 0) {
+        webLog("[IVR Verification] FAILED. Transitioning to STATE_PLAY_DISCONNECT_MESSAGE...");
+        mp3Stop();
+        delay(100);
+        currentAudioTrack = 4; // /XX/004.wav ("Number Not Registered")
+        mp3Play(currentAudioFolder, currentAudioTrack);
+        lastAudioPlayMillis = millis();
+        changeState(STATE_PLAY_DISCONNECT_MESSAGE);
+      } else {
+        if (millis() - lastAudioPlayMillis > 15000) {
+          webLog("[IVR Verification] Timeout waiting for verification task. Treating as unregistered.");
+          validationResult = 0;
+        }
+      }
+    }
+  }
+
+  // 5.77 User Verification Success Audio Completion Checker
+  if (currentCallState == STATE_PLAY_VERIFICATION_SUCCESS) {
+    if (checkAudioFinished()) {
+      webLog("Verification success audio finished. Transitioning to STATE_PLAY_MENU...");
+      mp3Stop();
+      delay(100);
+      currentAudioTrack = 5; // /XX/005.wav ("Main Menu")
+      mp3Play(currentAudioFolder, currentAudioTrack);
+      lastAudioPlayMillis = millis();
+      changeState(STATE_PLAY_MENU);
+    }
+  }
+
+  // 5.8 Main Menu Completion Checker
   if (currentCallState == STATE_PLAY_MENU) {
     if (checkAudioFinished()) {
-      webLog("Main Menu finished. Transitioning to STATE_WAIT_DTMF...");
-      changeState(STATE_WAIT_DTMF);
+      webLog("Main Menu finished. Transitioning to STATE_WAIT_MENU_DTMF...");
+      changeState(STATE_WAIT_MENU_DTMF);
       lastActivityTime = millis();
     }
   }
 
-  // 5.8 Selection Audio Completion Checker
-  if (currentCallState == STATE_PLAY_SELECTION) {
-    if (checkAudioFinished()) {
-      webLog("Selection audio completed.");
-      if (currentAudioFolder == 4 && currentAudioTrack == 4) {
-        // Warning 1 completed: replay language menu
-        webLog("Language warning 1 completed. Replaying Language Selection Menu...");
-        languageWarningPending = false;
-        currentAudioFolder = 4;
-        currentAudioTrack = 2; // Language menu `/04/002.wav`
-        changeState(STATE_PLAY_MENU);
-        mp3Play(currentAudioFolder, currentAudioTrack);
-        lastAudioPlayMillis = millis();
-      } else if (currentAudioFolder == 4 && (currentAudioTrack == 5 || currentAudioTrack == 6 || currentAudioTrack == 10 || currentAudioTrack == 13)) {
-        webLog("Rejection, timeout warning, or unregistered warning audio completed. Transitioning to STATE_HANGUP...");
-        changeState(STATE_HANGUP);
-      } else {
-        changeState(STATE_WAIT_DTMF);
-        lastActivityTime = millis();
-      }
-    }
-  }
-
-  // 5.9 DTMF Timeout Checker (4s for language, 15s otherwise)
-  if (currentCallState == STATE_WAIT_DTMF) {
-    unsigned long timeoutVal = (ivrSelectedLanguage == 0) ? 4000 : 15000;
-    if (millis() - lastActivityTime > timeoutVal) {
+  // 5.85 Main Menu DTMF Timeout Checker
+  if (currentCallState == STATE_WAIT_MENU_DTMF) {
+    if (millis() - lastActivityTime > 5000) {
       dtmfTimeoutCount++;
-      webLog("DTMF Wait Timeout (" + String(dtmfTimeoutCount) + ") for language: " + String(ivrSelectedLanguage));
-      
-      if (ivrSelectedLanguage == 0) {
-        if (dtmfTimeoutCount == 1) {
-          webLog("Language selection timeout #1. Playing warning /04/004.wav...");
-          languageWarningPending = true;
-          currentAudioFolder = 4;
-          currentAudioTrack = 4; // Warning 1
-          changeState(STATE_PLAY_SELECTION);
-          mp3Play(currentAudioFolder, currentAudioTrack);
-          lastAudioPlayMillis = millis();
-        } else {
-          webLog("Language selection timeout #2. Playing warning /04/005.wav and disconnecting...");
-          languageDisconnectPending = true;
-          currentAudioFolder = 4;
-          currentAudioTrack = 5; // Warning 2
-          changeState(STATE_PLAY_SELECTION);
-          mp3Play(currentAudioFolder, currentAudioTrack);
-          lastAudioPlayMillis = millis();
-        }
-      } else {
-        // Standard DTMF timeout
-        if (dtmfTimeoutCount < 3) {
-          changeState(STATE_RETURN_MENU);
-        } else {
-          webLog("Max DTMF timeouts reached. Transitioning to STATE_HANGUP...");
-          changeState(STATE_HANGUP);
-        }
-      }
-    }
-  }
-
-  // 5.91 Return Menu Handler
-  if (currentCallState == STATE_RETURN_MENU) {
-    webLog("Replaying Main Menu due to return/timeout...");
-    if (callerIsRegistered) {
-      if (ivrSelectedLanguage == 2) {
-        currentAudioFolder = 4;
-        currentAudioTrack = 9; // Tamil welcome + menu
-      } else if (ivrSelectedLanguage == 3) {
-        currentAudioFolder = 4;
-        currentAudioTrack = 12; // Hindi welcome + menu
-      } else {
-        currentAudioFolder = 4;
-        currentAudioTrack = 3; // English welcome + menu
-      }
-    } else {
-      currentAudioFolder = 4;
-      currentAudioTrack = 2; // Language menu WAV
-    }
-    changeState(STATE_PLAY_MENU);
-    mp3Play(currentAudioFolder, currentAudioTrack);
-    lastAudioPlayMillis = millis();
-  }
-
-  // 5.95 Exit message handler (Hangup state)
-  if (currentCallState == STATE_HANGUP) {
-    bool skipExitMessage = (currentAudioFolder == 4 && (currentAudioTrack == 5 || currentAudioTrack == 6 || currentAudioTrack == 10 || currentAudioTrack == 13));
-    if (skipExitMessage) {
-      webLog("Skipping exit message for unregistered / timeout disconnect. Hanging up immediately.");
-      Serial2.println("ATH");
-      addCallLog(callerNumber, dtmfBuffer, callerIsRegistered ? "Completed" : "Rejected/Unregistered");
-      changeState(STATE_ENDED);
-    } else {
-      if (currentAudioTrack != 12 || currentAudioFolder != 1) {
-        currentAudioFolder = 1;
-        currentAudioTrack = 12; // Exit message
+      webLog("[IVR Menu] Timeout #" + String(dtmfTimeoutCount));
+      if (dtmfTimeoutCount >= 2) {
+        webLog("[IVR Menu] Max timeouts reached. Playing disconnect.");
+        mp3Stop();
+        delay(100);
+        currentAudioTrack = 4; // /XX/004.wav
         mp3Play(currentAudioFolder, currentAudioTrack);
         lastAudioPlayMillis = millis();
-      }
-      if (checkAudioFinished() || (millis() - lastAudioPlayMillis > 5000)) {
-        webLog("Exit message finished or timed out. Hanging up.");
-        Serial2.println("ATH");
-        addCallLog(callerNumber, dtmfBuffer, callerIsRegistered ? "Completed" : "Rejected/Unregistered");
-        changeState(STATE_ENDED);
+        changeState(STATE_PLAY_DISCONNECT_MESSAGE);
+      } else {
+        webLog("[IVR Menu] Replaying menu...");
+        mp3Stop();
+        delay(100);
+        currentAudioTrack = 5; // /XX/005.wav
+        mp3Play(currentAudioFolder, currentAudioTrack);
+        lastAudioPlayMillis = millis();
+        changeState(STATE_PLAY_MENU);
       }
     }
   }
 
-  // 5.96 Verification timeout checker
-  if (currentCallState == STATE_VERIFY_USER && (millis() - ringingStartMillis > 15000)) {
-    webLog("Verification timeout. Defaulting to unregistered.");
-    validationResult = 0;
+  // 5.86 Repeat Menu Audio Completion Checker
+  if (currentCallState == STATE_PLAY_REPEAT_MENU) {
+    if (checkAudioFinished()) {
+      webLog("Repeat Menu audio finished. Replaying Main Menu...");
+      mp3Stop();
+      delay(100);
+      currentAudioTrack = 5; // /XX/005.wav ("Main Menu")
+      mp3Play(currentAudioFolder, currentAudioTrack);
+      lastAudioPlayMillis = millis();
+      changeState(STATE_PLAY_MENU);
+    }
   }
 
-  // 6. Ringing timeout checker
-  if ((currentCallState == STATE_RINGING || currentCallState == STATE_VERIFY_USER) && (millis() - ringingStartMillis > 40000)) {
-    webLog("Incoming call ring/verify timeout.");
-    addCallLog(callerNumber, "", "Missed");
+  // 5.87 Help Center Audio Completion Checker
+  if (currentCallState == STATE_HELP_CENTER) {
+    if (checkAudioFinished()) {
+      webLog("Help Center finished. Transitioning to STATE_WAIT_HELP_CENTER_DTMF...");
+      changeState(STATE_WAIT_HELP_CENTER_DTMF);
+      lastActivityTime = millis();
+    }
+  }
+
+  // 5.94 Installation digit collection checkers
+  if (currentCallState == STATE_COLLECTING_INSTALLATION_NO) {
+    if (dtmfBuffer.length() > 0 && (millis() - lastDtmfMillis > 5000)) {
+      startInstallationRegistration(dtmfBuffer);
+      changeState(STATE_REGISTERING_INSTALLATION);
+    } else if (dtmfBuffer.length() == 0 && (millis() - lastDtmfMillis > 10000)) {
+      webLog("Installation input silent timeout. Replaying prompt.");
+      lastDtmfMillis = millis();
+      mp3Stop();
+      delay(100);
+      currentAudioTrack = 13; // /XX/013.wav
+      mp3Play(currentAudioFolder, currentAudioTrack);
+      lastAudioPlayMillis = millis();
+    }
+  }
+
+  // 5.95 Check Installation registration results
+  if (currentCallState == STATE_REGISTERING_INSTALLATION) {
+    if (ivrInstallationResult != 0 && ivrInstallationResult != 99) {
+      int result = ivrInstallationResult;
+      ivrInstallationResult = 0; // Reset
+      
+      if (result == 1) { // Success
+        webLog("[IVR Installation] Success. Ticket: " + ivrInstallationTicket);
+        mp3Stop();
+        delay(100);
+        currentAudioTrack = 14; // /XX/014.wav
+        mp3Play(currentAudioFolder, currentAudioTrack);
+        lastAudioPlayMillis = millis();
+        
+        String msg = "Dear customer, your installation request has been registered. Ticket: " + ivrInstallationTicket + ". V-Varma.";
+        sendSMS(callerNumber, msg);
+        addSmsLog(callerNumber, msg, "Outgoing", "Sent");
+        addCallLog(callerNumber, dtmfBuffer, "Installation Success (" + ivrInstallationTicket + ")");
+        changeState(STATE_PLAY_DISCONNECT_MESSAGE);
+      } else { // Failed
+        webLog("[IVR Installation] Failed to register installation.");
+        changeState(STATE_HANGUP);
+      }
+    }
+  }
+
+  // 5.96 Customer Care Representative Connecting Handler
+  if (currentCallState == STATE_CONNECTING_CUSTOMER_CARE) {
+    if (checkAudioFinished()) {
+      static unsigned long waitStart = 0;
+      if (waitStart == 0) {
+        waitStart = millis();
+        webLog("[IVR Customer Care] Starting 8-10s connecting wait...");
+      }
+      
+      if (millis() - waitStart > 9000) { // 9 seconds wait
+        waitStart = 0; // reset
+        webLog("[IVR Customer Care] Wait finished. Playing busy message /XX/016.wav...");
+        mp3Stop();
+        delay(100);
+        currentAudioTrack = 16; // /XX/016.wav
+        mp3Play(currentAudioFolder, currentAudioTrack);
+        lastAudioPlayMillis = millis();
+        changeState(STATE_PLAY_DISCONNECT_MESSAGE);
+      }
+    }
+  }
+
+  // 5.97 Disconnect message audio checker
+  if (currentCallState == STATE_PLAY_DISCONNECT_MESSAGE) {
+    if (checkAudioFinished()) {
+      webLog("Disconnect message audio completed. Hanging up call...");
+      changeState(STATE_HANGUP);
+    }
+  }
+
+  // 5.98 Exit message handler (Hangup state)
+  if (currentCallState == STATE_HANGUP) {
+    webLog("Hanging up call physically...");
+    hangupCall();
     changeState(STATE_ENDED);
   }
 
-  // 6.8 Warranty input silent timeout handler (5s after typing stops, or 10s idle)
-  if (customIvrEnabled && currentCallState == STATE_COLLECTING_PRODUCT_NO && ivrWarrantyCheckResult != 99) {
-    if (dtmfBuffer.length() > 0 && (millis() - lastDtmfMillis > 5000)) {
-      // Treat as finished typing
-      verifyIvrWarranty(dtmfBuffer);
-    } else if (dtmfBuffer.length() == 0 && (millis() - lastDtmfMillis > 10000)) {
-      // 10s silent timeout
-      webLog("Warranty input silent timeout. Replaying prompt.");
-      lastDtmfMillis = millis();
-      playIvrAudio("/01/005.mp3");
-    }
-  }
-
-  // 6.9 Check Warranty verification task results
-  if (customIvrEnabled && currentCallState == STATE_COLLECTING_PRODUCT_NO) {
-    if (ivrWarrantyCheckResult != 0 && ivrWarrantyCheckResult != 99) {
-      int result = ivrWarrantyCheckResult;
-      ivrWarrantyCheckResult = 0; // Reset
-      processWarrantyResult(ivrWarrantyCheckCode, result);
-    }
-  }
-
-  // 6.95 Check Complaint registration task results
-  if (customIvrEnabled && ivrCurrentNode == "complaint_reg") {
-    if (ivrComplaintResult != 0 && ivrComplaintResult != 99) {
-      int res = ivrComplaintResult;
-      ivrComplaintResult = 0; // Reset
-      
-      if (res == 1) {
-        webLog("[IVR Case 15] Complaint registration completed successfully. Ticket: " + ivrComplaintTicket);
-        playIvrAudio("/01/010.mp3"); // Success tone
-        String msg = "Dear customer, your complaint has been registered. Ticket: " + ivrComplaintTicket + ". V-Varma.";
-        sendSMS(callerNumber, msg);
-        addSmsLog(callerNumber, msg, "Outgoing", "Sent");
-        delay(5000);
-        Serial2.println("ATH");
-        addCallLog(callerNumber, dtmfBuffer, "Complaint Success (" + ivrComplaintTicket + ")");
-        changeState(STATE_ENDED);
-      } else {
-        webLog("Complaint registration failed. Hanging up.");
-        delay(3000);
-        Serial2.println("ATH");
-        addCallLog(callerNumber, dtmfBuffer, "Complaint Failed");
-        changeState(STATE_ENDED);
-      }
-    }
-  }
-
   // 7. Active call timeout (security hangup after 5 minutes)
-  if ((currentCallState == STATE_ACTIVE_CALL || currentCallState == STATE_WAIT_DTMF || currentCallState == STATE_COLLECTING_DTMF || currentCallState == STATE_COLLECTING_PRODUCT_NO || currentCallState == STATE_AGENT_CONNECTING) && (millis() - callStartMillis > 300000)) {
+  if (currentCallState != STATE_IDLE && currentCallState != STATE_CALLBACK_DIALING && currentCallState != STATE_ENDED && (millis() - callStartMillis > 300000)) {
     webLog("Active call limit exceeded. Auto hanging up.");
-    Serial2.println("ATH");
+    hangupCall();
     addCallLog(callerNumber, dtmfBuffer, "Timeout Hangup");
     changeState(STATE_ENDED);
   }
@@ -4499,7 +6341,7 @@ void loop() {
   // Handle callback dial timeout (Auto hangup if no answer in 40s)
   if (currentCallState == STATE_CALLBACK_DIALING && (millis() - callStartMillis > 40000)) {
     webLog("Callback dialing ring timeout.");
-    Serial2.println("ATH");
+    hangupCall();
     addCallLog(callerNumber, "", "Callback No Answer");
     changeState(STATE_ENDED);
   }
@@ -4508,8 +6350,8 @@ void loop() {
   if (currentCallState == STATE_AGENT_CONNECTING && (millis() - callStartMillis > 40000)) {
     webLog("[IVR Case 18] Caller requests an agent, but all agents are busy/unavailable (timeout).");
     playIvrAudio("/01/012.mp3");
-    delay(5000);
-    Serial2.println("ATH");
+    delay(3500);
+    hangupCall();
     addCallLog(callerNumber, dtmfBuffer, "Agent Busy Timeout");
     changeState(STATE_ENDED);
   }
@@ -4519,7 +6361,7 @@ void loop() {
     bool regOk = (gsmRegStatus == "1" || gsmRegStatus == "5");
     if (!regOk && gsmModuleConnected) {
       webLog("[IVR Case 17] Network/SIM connection lost during the call.");
-      Serial2.println("ATH");
+      hangupCall();
       addCallLog(callerNumber, dtmfBuffer, "Network Lost");
       changeState(STATE_ENDED);
     }
@@ -4602,7 +6444,7 @@ void ensureIvrMenuJson() {
     return;
   }
   
-  File f = myFS->open("/ivr_menu.json", FILE_WRITE);
+  File f = myFS->open("/ivr_menu.json", "w");
   if (f) {
     String jsonStr = "{\n"
                      "  \"nodes\": {\n"
@@ -4681,7 +6523,7 @@ void loadIvrNode(String nodeName) {
     return;
   }
 
-  StaticJsonDocument<2048> doc;
+  DynamicJsonDocument doc(2048);
   DeserializationError error = deserializeJson(doc, f);
   f.close();
 
@@ -4728,91 +6570,200 @@ void loadIvrNode(String nodeName) {
 }
 
 void processIvrDtmf(String key) {
-  if (currentCallState != STATE_ACTIVE_CALL && currentCallState != STATE_COLLECTING_DTMF && currentCallState != STATE_COLLECTING_PRODUCT_NO) {
-    webLog("[IVR] DTMF received but no active call or digit collection state.");
-    return;
-  }
+  webLog("[IVR DTMF] Received key: " + key + " | State: " + getStateName(currentCallState));
+  lastDtmfMillis = millis();
+  lastActivityTime = millis();
   
-  if (customIvrEnabled) {
-    webLog("[IVR] Custom DTMF processing: key=" + key + " in state=" + String((int)currentCallState) + ", node=" + ivrCurrentNode);
-    lastDtmfMillis = millis(); // Refresh timeout timer
-    
-    if (currentCallState == STATE_COLLECTING_PRODUCT_NO) {
-      // Accumulate code
-      if (key == "#") {
-        if (warrantyInputBuffer.length() > 0) {
-          verifyIvrWarranty(warrantyInputBuffer);
-        } else {
-          webLog("Empty warranty code entered.");
-          playIvrAudio("/01/008.mp3");
+  if (currentCallState == STATE_WAIT_LANGUAGE_DTMF) {
+    if (key == "1" || key == "2" || key == "3") {
+      ivrSelectedLanguage = key.toInt();
+      // English (1) -> Folder 2
+      // Tamil (2) -> Folder 3
+      // Hinglish (3) -> Folder 4
+      currentAudioFolder = ivrSelectedLanguage + 1; 
+      webLog("[IVR] Language selected: " + String(ivrSelectedLanguage) + " | Folder: " + String(currentAudioFolder));
+      
+      // Stop current welcome audio and start Verification audio /XX/002.wav
+      mp3Stop();
+      delay(100);
+      currentAudioTrack = 2; // /XX/002.wav
+      mp3Play(currentAudioFolder, currentAudioTrack);
+      lastAudioPlayMillis = millis();
+      
+      // Kick off background user registration verification
+      validationResult = -1;
+      validatingNumber = callerNumber;
+      ValidateTaskData *data = new ValidateTaskData();
+      if (data != NULL) {
+        data->phoneNumber = callerNumber;
+        BaseType_t res = xTaskCreatePinnedToCore(validateTask, "val_task", 12288, (void *)data, 1, NULL, 0);
+        if (res != pdPASS) {
+          webLog("Failed to create validation task. Fallback to unregistered.");
+          delete data;
+          validationResult = 0;
         }
-      } else if (key == "*") {
-        warrantyInputBuffer = "";
-        webLog("Cleared warranty buffer.");
-        beep(1000, 100);
       } else {
-        warrantyInputBuffer += key;
-        webLog("Buffered code: " + warrantyInputBuffer);
+        validationResult = 0;
       }
-      return;
-    }
-    
-    // In menu state (STATE_ACTIVE_CALL or STATE_COLLECTING_DTMF)
-    if (ivrCurrentNode == "start") {
-      if (key == "1") {
-        webLog("[IVR Case 5] Caller presses 1 (Warranty option).");
-        playIvrAudio("/01/005.mp3"); // Enter product number followed by #
-        warrantyInputBuffer = "";
-        changeState(STATE_COLLECTING_PRODUCT_NO);
-      } else if (key == "2") {
-        webLog("[IVR Case 6] Caller presses 2 (Complaint Registration option).");
-        startComplaintRegistration();
-      } else if (key == "3") {
-        webLog("[IVR Case 7] Caller presses 3 (Connect to Agent option).");
-        startAgentConnection();
-      } else {
-        webLog("[IVR Case 8] Caller presses an invalid key: " + key);
-        playIvrAudio("/01/013.mp3"); // Invalid key message
-        delay(3000);
-        loadIvrNode("start"); // Replay welcome menu
-      }
+      
+      changeState(STATE_VERIFY_USER);
     } else {
-      webLog("DTMF ignored in custom node: " + ivrCurrentNode);
+      webLog("Invalid language option: " + key);
     }
     return;
   }
   
-  // Normal non-custom IVR JSON flow
-  webLog("[IVR] Processing DTMF Key: " + key + " in Node: " + ivrCurrentNode);
-  bool optionFound = false;
-  for (int i = 0; i < currentIvrNode.optionCount; i++) {
-    if (currentIvrNode.optionKeys[i] == key) {
-      String targetNode = currentIvrNode.optionTargetNodes[i];
-      webLog("[IVR] Option matched! Transitioning to: " + targetNode);
-      loadIvrNode(targetNode);
-      optionFound = true;
-      break;
+  if (currentCallState == STATE_WAIT_MENU_DTMF) {
+    if (key == "1") {
+      webLog("[IVR] Warranty Service selected.");
+      mp3Stop();
+      delay(100);
+      warrantyInputBuffer = "";
+      warrantyRetryCount = 0;
+      currentAudioTrack = 6; // /XX/006.wav
+      mp3Play(currentAudioFolder, currentAudioTrack);
+      lastAudioPlayMillis = millis();
+      changeState(STATE_COLLECTING_WARRANTY_NO);
+    } else if (key == "2") {
+      webLog("[IVR] Complaint Registration selected.");
+      mp3Stop();
+      delay(100);
+      warrantyInputBuffer = ""; // reuse same buffer
+      currentAudioTrack = 10; // /XX/010.wav
+      mp3Play(currentAudioFolder, currentAudioTrack);
+      lastAudioPlayMillis = millis();
+      changeState(STATE_COLLECTING_COMPLAINT_NO);
+    } else if (key == "3") {
+      webLog("[IVR] Help Center selected.");
+      mp3Stop();
+      delay(100);
+      currentAudioTrack = 12; // /XX/012.wav
+      mp3Play(currentAudioFolder, currentAudioTrack);
+      lastAudioPlayMillis = millis();
+      changeState(STATE_HELP_CENTER);
+    } else if (key == "4") {
+      webLog("[IVR] Repeat Menu selected.");
+      mp3Stop();
+      delay(100);
+      currentAudioTrack = 17; // /XX/017.wav
+      mp3Play(currentAudioFolder, currentAudioTrack);
+      lastAudioPlayMillis = millis();
+      changeState(STATE_PLAY_REPEAT_MENU);
+    } else {
+      webLog("Invalid menu option: " + key);
     }
+    return;
   }
   
-  if (!optionFound) {
-    webLog("[IVR] Key " + key + " not registered in current node options.");
+  if (currentCallState == STATE_COLLECTING_WARRANTY_NO) {
+    if (key == "#") {
+      if (warrantyInputBuffer.length() > 0) {
+        verifyIvrWarranty(warrantyInputBuffer);
+        changeState(STATE_VERIFYING_WARRANTY);
+      } else {
+        webLog("Empty warranty code entered.");
+        mp3Play(currentAudioFolder, 9); // /XX/009.wav
+        lastAudioPlayMillis = millis();
+      }
+    } else if (key == "*") {
+      warrantyInputBuffer = "";
+      webLog("Cleared warranty buffer.");
+      beep(1000, 100);
+    } else {
+      warrantyInputBuffer += key;
+      webLog("Warranty Buffer: " + warrantyInputBuffer);
+    }
+    return;
+  }
+  
+  if (currentCallState == STATE_COLLECTING_COMPLAINT_NO) {
+    if (key == "#") {
+      if (warrantyInputBuffer.length() > 0) {
+        startComplaintRegistration(warrantyInputBuffer);
+        changeState(STATE_REGISTERING_COMPLAINT);
+      } else {
+        webLog("Empty complaint code entered.");
+        mp3Play(currentAudioFolder, 10); // Replay /XX/010.wav
+        lastAudioPlayMillis = millis();
+      }
+    } else if (key == "*") {
+      warrantyInputBuffer = "";
+      webLog("Cleared complaint buffer.");
+      beep(1000, 100);
+    } else {
+      warrantyInputBuffer += key;
+      webLog("Complaint Buffer: " + warrantyInputBuffer);
+    }
+    return;
+  }
+  
+  if (currentCallState == STATE_WAIT_HELP_CENTER_DTMF) {
+    if (key == "1") {
+      webLog("[IVR] Installation Support selected.");
+      mp3Stop();
+      delay(100);
+      warrantyInputBuffer = "";
+      currentAudioTrack = 13; // /XX/013.wav
+      mp3Play(currentAudioFolder, currentAudioTrack);
+      lastAudioPlayMillis = millis();
+      changeState(STATE_COLLECTING_INSTALLATION_NO);
+    } else if (key == "2") {
+      webLog("[IVR] Connecting to Customer Care selected.");
+      mp3Stop();
+      delay(100);
+      currentAudioTrack = 15; // /XX/015.wav
+      mp3Play(currentAudioFolder, currentAudioTrack);
+      lastAudioPlayMillis = millis();
+      changeState(STATE_CONNECTING_CUSTOMER_CARE);
+    } else if (key == "9") {
+      webLog("[IVR] Back to Main Menu selected.");
+      mp3Stop();
+      delay(100);
+      currentAudioTrack = 5; // /XX/005.wav
+      mp3Play(currentAudioFolder, currentAudioTrack);
+      lastAudioPlayMillis = millis();
+      changeState(STATE_PLAY_MENU);
+    } else {
+      webLog("Invalid Help Center option: " + key);
+    }
+    return;
+  }
+  
+  if (currentCallState == STATE_COLLECTING_INSTALLATION_NO) {
+    if (key == "#") {
+      if (warrantyInputBuffer.length() > 0) {
+        startInstallationRegistration(warrantyInputBuffer);
+        changeState(STATE_REGISTERING_INSTALLATION);
+      } else {
+        webLog("Empty installation code entered.");
+        mp3Play(currentAudioFolder, 13); // Replay /XX/013.wav
+        lastAudioPlayMillis = millis();
+      }
+    } else if (key == "*") {
+      warrantyInputBuffer = "";
+      webLog("Cleared installation buffer.");
+      beep(1000, 100);
+    } else {
+      warrantyInputBuffer += key;
+      webLog("Installation Buffer: " + warrantyInputBuffer);
+    }
+    return;
   }
 }
 
 // ==================== CUSTOM IVR CORE LOGIC ====================
 
 void verifyIvrWarranty(String productCode) {
-  if (currentCallState != STATE_COLLECTING_PRODUCT_NO) return;
+  if (currentCallState != STATE_COLLECTING_WARRANTY_NO) return;
   
-  webLog("[IVR Case 11] Caller enters a product number for warranty verification. Code: " + productCode);
+  webLog("[IVR] Caller enters a product number for warranty verification. Code: " + productCode);
   ivrWarrantyCheckCode = productCode;
   ivrWarrantyCheckResult = 99; // in progress
   
   WarrantyTaskData *data = new WarrantyTaskData();
   if (data != NULL) {
     data->productCode = productCode;
-    BaseType_t res = xTaskCreatePinnedToCore(verifyIvrWarrantyTask, "warranty_task", 6144, (void *)data, 1, NULL, 0);
+    BaseType_t res = xTaskCreatePinnedToCore(verifyIvrWarrantyTask, "warranty_task", 12288, (void *)data, 1, NULL, 0);
     if (res != pdPASS) {
       webLog("Failed to create warranty verification task.");
       delete data;
@@ -4828,49 +6779,89 @@ void verifyIvrWarrantyTask(void *pvParameters) {
   if (data == NULL) { vTaskDelete(NULL); return; }
 
   int tempResult = 3; // default not found
+  
+  // ── 1. Check local Warranty Register CSV first (SD card database) ──
+  String localStatus = "";
+  if (sdDbCheckWarrantyLocal(data->productCode, localStatus)) {
+    localStatus.toLowerCase();
+    if (localStatus == "active")         tempResult = 1;
+    else if (localStatus == "claimed")   tempResult = 2;
+    else if (localStatus == "expired")   tempResult = 2;
+    else                                   tempResult = 3;
+    webLog("[WarrantyTask] Verified locally in /db/warranty_register.csv: status=" + localStatus);
+    if (ivrWarrantyCheckCode == data->productCode) ivrWarrantyCheckResult = tempResult;
+    delete data;
+    vTaskDelete(NULL);
+    return;
+  }
+  
+  // ── 1.5 Check SD warranty cache (legacy cache lookup) ──
+  String cachedStatus = "";
+  if (sdDbCheckWarrantyCache(data->productCode, cachedStatus)) {
+    if (cachedStatus == "active")         tempResult = 1;
+    else if (cachedStatus == "claimed")   tempResult = 2;
+    else if (cachedStatus == "expired")   tempResult = 2;
+    else                                   tempResult = 3;
+    webLog("[WarrantyTask] Using SD cache result: " + cachedStatus);
+    if (ivrWarrantyCheckCode == data->productCode) ivrWarrantyCheckResult = tempResult;
+    delete data;
+    vTaskDelete(NULL);
+    return;
+  }
+  
+  // ── 2. Not in local DB or cache — check GSheets via HTTP ──
   if (WiFi.status() == WL_CONNECTED && scriptId.length() > 0) {
-    webLog("[HTTP Task] Verifying warranty via Google Sheets: " + data->productCode);
-    WiFiClientSecure *client = new WiFiClientSecure();
-    HTTPClient *http = new HTTPClient();
-    
-    if (client != nullptr && http != nullptr) {
-      client->setInsecure();
-      String encCode = data->productCode;
-      encCode.replace("+", "%2B");
-      encCode.replace(" ", "%20");
-      String url = "https://script.google.com/macros/s/" + scriptId + "/exec?action=verifyWarranty&productCode=" + encCode + "&sheetId=" + sheetId;
+    if (acquireSecureClientLock(15000)) {
+      webLog("[HTTP Task] Verifying warranty via Google Sheets: " + data->productCode);
+      WiFiClientSecure *client = new WiFiClientSecure();
+      HTTPClient *http = new HTTPClient();
       
-      if (http->begin(*client, url)) {
-        http->setTimeout(25000);
-        http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-        int httpCode = http->GET();
-        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
-          String payload = http->getString();
-          webLog("[HTTP Task] Warranty Response: " + payload);
-          if (payload.indexOf("\"status\":\"active\"") != -1 || payload.indexOf("\"status\": \"active\"") != -1) {
-            tempResult = 1;
-          } else if (payload.indexOf("\"status\":\"claimed\"") != -1 || payload.indexOf("\"status\": \"claimed\"") != -1) {
-            tempResult = 2;
-          } else if (payload.indexOf("\"status\":\"expired\"") != -1 || payload.indexOf("\"status\": \"expired\"") != -1) {
-            tempResult = 2; // Expired counts as claimed/inactive for warranty menu purposes
+      if (client != nullptr && http != nullptr) {
+        client->setInsecure();
+        String encCode = data->productCode;
+        encCode.replace("+", "%2B");
+        encCode.replace(" ", "%20");
+        String url = "https://script.google.com/macros/s/" + scriptId + "/exec?action=verifyWarranty&productCode=" + encCode + "&sheetId=" + sheetId;
+        
+        if (http->begin(*client, url)) {
+          http->setTimeout(25000);
+          http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+          int httpCode = http->GET();
+          if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+            String payload = http->getString();
+            webLog("[HTTP Task] Warranty Response: " + payload);
+            String resolvedStatus = "notfound";
+            if (payload.indexOf("\"status\":\"active\"") != -1 || payload.indexOf("\"status\": \"active\"") != -1) {
+              tempResult = 1; resolvedStatus = "active";
+            } else if (payload.indexOf("\"status\":\"claimed\"") != -1 || payload.indexOf("\"status\": \"claimed\"") != -1) {
+              tempResult = 2; resolvedStatus = "claimed";
+            } else if (payload.indexOf("\"status\":\"expired\"") != -1 || payload.indexOf("\"status\": \"expired\"") != -1) {
+              tempResult = 2; resolvedStatus = "expired";
+            } else {
+              tempResult = 3; resolvedStatus = "notfound";
+            }
+            // Cache result to SD for future calls
+            sdDbCacheWarranty(data->productCode, resolvedStatus);
           } else {
-            tempResult = 3; // not found
+            webLog("[HTTP Task] Warranty verification HTTP failed. Code: " + String(httpCode));
+            tempResult = 3;
           }
+          http->end();
         } else {
-          webLog("[HTTP Task] Warranty verification HTTP failed. Code: " + String(httpCode));
+          webLog("[HTTP Task] Warranty connection failed.");
           tempResult = 3;
         }
-        http->end();
       } else {
-        webLog("[HTTP Task] Warranty connection failed.");
-        tempResult = 3;
+        webLog("[HTTP Task] Memory allocation failed for warranty verification client/http");
       }
+      
+      if (client != nullptr) delete client;
+      if (http != nullptr) delete http;
+      releaseSecureClientLock();
     } else {
-      webLog("[HTTP Task] Memory allocation failed for warranty verification client/http");
+      webLog("[HTTP Task] Warranty verification skipped: secure client busy");
+      tempResult = 3;
     }
-    
-    if (client != nullptr) delete client;
-    if (http != nullptr) delete http;
   } else {
     webLog("[HTTP Task] No WiFi/Script ID. offline check failed for code: " + data->productCode);
     tempResult = 3;
@@ -4886,71 +6877,33 @@ void verifyIvrWarrantyTask(void *pvParameters) {
   vTaskDelete(NULL);
 }
 
-void processWarrantyResult(String code, int result) {
-  if (result == 1) {
-    webLog("[IVR Case 12] Product found and warranty is active.");
-    playIvrAudio("/01/006.mp3");
-    String msg = "Dear customer, your V-Varma product " + code + " warranty is active. Thank you.";
-    sendSMS(callerNumber, msg);
-    addSmsLog(callerNumber, msg, "Outgoing", "Sent");
-    delay(5000);
-    Serial2.println("ATH");
-    addCallLog(callerNumber, dtmfBuffer, "Warranty Active (" + code + ")");
-    changeState(STATE_ENDED);
-  } else if (result == 2) {
-    webLog("[IVR Case 13] Product found but warranty has already been claimed.");
-    playIvrAudio("/01/007.mp3");
-    String msg = "Dear customer, your V-Varma product " + code + " warranty has already been claimed.";
-    sendSMS(callerNumber, msg);
-    addSmsLog(callerNumber, msg, "Outgoing", "Sent");
-    delay(5000);
-    Serial2.println("ATH");
-    addCallLog(callerNumber, dtmfBuffer, "Warranty Claimed (" + code + ")");
-    changeState(STATE_ENDED);
-  } else {
-    webLog("[IVR Case 14] Product number not found / invalid product number entered.");
-    playIvrAudio("/01/008.mp3");
-    String msg = "Dear customer, V-Varma product number " + code + " was not found. Please try again.";
-    sendSMS(callerNumber, msg);
-    addSmsLog(callerNumber, msg, "Outgoing", "Sent");
-    
-    warrantyRetryCount++;
-    if (warrantyRetryCount >= 3) {
-      webLog("Max warranty retries reached. Hanging up.");
-      delay(3000);
-      Serial2.println("ATH");
-      addCallLog(callerNumber, dtmfBuffer, "Warranty Failed (" + code + ")");
-      changeState(STATE_ENDED);
-    } else {
-      dtmfBuffer = "";
-      lastDtmfMillis = millis();
-      // Allow entering again by playing product number prompt after a brief pause
-      delay(3000);
-      playIvrAudio("/01/005.mp3");
-    }
-  }
-}
 
-void startComplaintRegistration() {
+void startComplaintRegistration(String warrantyId) {
   ivrCurrentNode = "complaint_reg";
   ivrComplaintResult = 99; // in progress
   ivrComplaintTicket = "";
   
-  webLog("[IVR Case 6] Caller presses 2 (Complaint Registration option). Registered complaint offline/online.");
-  playIvrAudio("/01/009.mp3"); // Registering complaint tone
+  webLog("[IVR] Caller registers complaint for Product Code: " + warrantyId);
+  
+  // ── Save to SD offline queue FIRST (instant, survives WiFi loss) ──
+  // The periodic sync task will flush this to GSheets when WiFi is available.
+  sdDbQueueComplaint(callerNumber, warrantyId, "IVR_Auto_Register");
   
   ComplaintTaskData *data = new ComplaintTaskData();
   if (data != NULL) {
-    data->warrantyId = "GENERIC"; // Since we register directly from menu option 2
+    data->warrantyId = warrantyId;
     data->phone = callerNumber;
-    BaseType_t res = xTaskCreatePinnedToCore(registerComplaintTask, "complaint_task", 6144, (void *)data, 1, NULL, 0);
+    BaseType_t res = xTaskCreatePinnedToCore(registerComplaintTask, "complaint_task", 12288, (void *)data, 1, NULL, 0);
     if (res != pdPASS) {
       webLog("Failed to create complaint registration task.");
       delete data;
-      ivrComplaintResult = 2; // fallback to failed
+      // ivrComplaintResult stays 99 (in progress via SD queue) — set to offline success
+      ivrComplaintTicket = "VRM-" + String(random(100000, 999999));
+      ivrComplaintResult = 1; // SD-queued = success from caller perspective
     }
   } else {
-    ivrComplaintResult = 2;
+    ivrComplaintTicket = "VRM-" + String(random(100000, 999999));
+    ivrComplaintResult = 1; // SD-queued = success
   }
 }
 
@@ -4966,66 +6919,72 @@ void registerComplaintTask(void *pvParameters) {
   String ticket = "";
 
   if (WiFi.status() == WL_CONNECTED && scriptId.length() > 0) {
-    webLog("[HTTP Task] Registering complaint via Google Sheets for warranty: " + data->warrantyId);
-    WiFiClientSecure *client = new WiFiClientSecure();
-    HTTPClient *http = new HTTPClient();
-    
-    if (client != nullptr && http != nullptr) {
-      client->setInsecure();
-      String encWarranty = data->warrantyId;
-      encWarranty.replace("+", "%2B");
-      encWarranty.replace(" ", "%20");
-      String encPhone = data->phone;
-      encPhone.replace("+", "%2B");
-      encPhone.replace(" ", "%20");
+    if (acquireSecureClientLock(15000)) {
+      webLog("[HTTP Task] Registering complaint via Google Sheets for warranty: " + data->warrantyId);
+      WiFiClientSecure *client = new WiFiClientSecure();
+      HTTPClient *http = new HTTPClient();
       
-      String url = "https://script.google.com/macros/s/" + scriptId + "/exec?action=registerComplaint&warrantyId=" + encWarranty + "&phone=" + encPhone + "&issue=IVR_Auto_Register&sheetId=" + sheetId;
-      
-      if (http->begin(*client, url)) {
-        http->setTimeout(25000);
-        http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-        int httpCode = http->GET();
-        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
-          String payload = http->getString();
-          webLog("[HTTP Task] Complaint Response: " + payload);
-          
-          // Find ticket number
-          int startIdx = payload.indexOf("\"ticketNumber\":\"");
-          if (startIdx != -1) {
-            int endIdx = payload.indexOf("\"", startIdx + 16);
-            if (endIdx != -1) {
-              ticket = payload.substring(startIdx + 16, endIdx);
-            }
-          } else {
-            startIdx = payload.indexOf("\"ticket\":\"");
+      if (client != nullptr && http != nullptr) {
+        client->setInsecure();
+        String encWarranty = data->warrantyId;
+        encWarranty.replace("+", "%2B");
+        encWarranty.replace(" ", "%20");
+        String encPhone = data->phone;
+        encPhone.replace("+", "%2B");
+        encPhone.replace(" ", "%20");
+        
+        String url = "https://script.google.com/macros/s/" + scriptId + "/exec?action=registerComplaint&warrantyId=" + encWarranty + "&phone=" + encPhone + "&issue=IVR_Auto_Register&sheetId=" + sheetId;
+        
+        if (http->begin(*client, url)) {
+          http->setTimeout(25000);
+          http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+          int httpCode = http->GET();
+          if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+            String payload = http->getString();
+            webLog("[HTTP Task] Complaint Response: " + payload);
+            
+            // Find ticket number
+            int startIdx = payload.indexOf("\"ticketNumber\":\"");
             if (startIdx != -1) {
-              int endIdx = payload.indexOf("\"", startIdx + 10);
+              int endIdx = payload.indexOf("\"", startIdx + 16);
               if (endIdx != -1) {
-                ticket = payload.substring(startIdx + 10, endIdx);
+                ticket = payload.substring(startIdx + 16, endIdx);
+              }
+            } else {
+              startIdx = payload.indexOf("\"ticket\":\"");
+              if (startIdx != -1) {
+                int endIdx = payload.indexOf("\"", startIdx + 10);
+                if (endIdx != -1) {
+                  ticket = payload.substring(startIdx + 10, endIdx);
+                }
               }
             }
-          }
-          
-          if (payload.indexOf("\"status\":\"success\"") != -1) {
-            tempResult = 1;
+            
+            if (payload.indexOf("\"status\":\"success\"") != -1) {
+              tempResult = 1;
+            } else {
+              tempResult = 2;
+            }
           } else {
+            webLog("[HTTP Task] Complaint registration HTTP failed. Code: " + String(httpCode));
             tempResult = 2;
           }
+          http->end();
         } else {
-          webLog("[HTTP Task] Complaint registration HTTP failed. Code: " + String(httpCode));
+          webLog("[HTTP Task] Complaint registration connection failed.");
           tempResult = 2;
         }
-        http->end();
       } else {
-        webLog("[HTTP Task] Complaint registration connection failed.");
-        tempResult = 2;
+        webLog("[HTTP Task] Memory allocation failed for complaint registration client/http");
       }
+      
+      if (client != nullptr) delete client;
+      if (http != nullptr) delete http;
+      releaseSecureClientLock();
     } else {
-      webLog("[HTTP Task] Memory allocation failed for complaint registration client/http");
+      webLog("[HTTP Task] Complaint registration skipped: secure client busy");
+      tempResult = 2;
     }
-    
-    if (client != nullptr) delete client;
-    if (http != nullptr) delete http;
   } else {
     // Local fallback for offline testing
     webLog("[HTTP Task] Local fallback: Complaint registered offline.");
@@ -5035,6 +6994,127 @@ void registerComplaintTask(void *pvParameters) {
 
   ivrComplaintTicket = ticket;
   ivrComplaintResult = tempResult;
+
+  delete data;
+  vTaskDelete(NULL);
+}
+
+struct InstallationTaskData {
+  String warrantyId;
+  String phone;
+};
+
+void startInstallationRegistration(String warrantyId) {
+  ivrInstallationResult = 99; // in progress
+  ivrInstallationTicket = "";
+  
+  webLog("[IVR] Caller registers installation for Product Code: " + warrantyId);
+  
+  // ── Save to SD offline queue FIRST ──
+  sdDbQueueInstallation(callerNumber, warrantyId);
+  
+  InstallationTaskData *data = new InstallationTaskData();
+  if (data != NULL) {
+    data->warrantyId = warrantyId;
+    data->phone = callerNumber;
+    BaseType_t res = xTaskCreatePinnedToCore(registerInstallationTask, "install_task", 12288, (void *)data, 1, NULL, 0);
+    if (res != pdPASS) {
+      webLog("Failed to create installation registration task.");
+      delete data;
+      ivrInstallationTicket = "INS-" + String(random(100000, 999999));
+      ivrInstallationResult = 1;
+    }
+  } else {
+    ivrInstallationTicket = "INS-" + String(random(100000, 999999));
+    ivrInstallationResult = 1;
+  }
+}
+
+void registerInstallationTask(void *pvParameters) {
+  InstallationTaskData *data = (InstallationTaskData *)pvParameters;
+  if (data == NULL) {
+    ivrInstallationResult = 2; // failed
+    vTaskDelete(NULL);
+    return;
+  }
+
+  int tempResult = 2; // default failed
+  String ticket = "";
+
+  if (WiFi.status() == WL_CONNECTED && scriptId.length() > 0) {
+    if (acquireSecureClientLock(15000)) {
+      webLog("[HTTP Task] Registering installation via Google Sheets for warranty: " + data->warrantyId);
+      WiFiClientSecure *client = new WiFiClientSecure();
+      HTTPClient *http = new HTTPClient();
+      
+      if (client != nullptr && http != nullptr) {
+        client->setInsecure();
+        String encWarranty = data->warrantyId;
+        encWarranty.replace("+", "%2B");
+        encWarranty.replace(" ", "%20");
+        String encPhone = data->phone;
+        encPhone.replace("+", "%2B");
+        encPhone.replace(" ", "%20");
+        
+        String url = "https://script.google.com/macros/s/" + scriptId + "/exec?action=registerInstallation&warrantyId=" + encWarranty + "&phone=" + encPhone + "&sheetId=" + sheetId;
+        
+        if (http->begin(*client, url)) {
+          http->setTimeout(25000);
+          http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+          int httpCode = http->GET();
+          if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+            String payload = http->getString();
+            webLog("[HTTP Task] Installation Response: " + payload);
+            
+            int startIdx = payload.indexOf("\"ticketNumber\":\"");
+            if (startIdx != -1) {
+              int endIdx = payload.indexOf("\"", startIdx + 16);
+              if (endIdx != -1) {
+                ticket = payload.substring(startIdx + 16, endIdx);
+              }
+            } else {
+              startIdx = payload.indexOf("\"ticket\":\"");
+              if (startIdx != -1) {
+                int endIdx = payload.indexOf("\"", startIdx + 10);
+                if (endIdx != -1) {
+                  ticket = payload.substring(startIdx + 10, endIdx);
+                }
+              }
+            }
+            
+            if (payload.indexOf("\"status\":\"success\"") != -1) {
+              tempResult = 1;
+            } else {
+              tempResult = 2;
+            }
+          } else {
+            webLog("[HTTP Task] Installation HTTP failed. Code: " + String(httpCode));
+            tempResult = 2;
+          }
+          http->end();
+        } else {
+          webLog("[HTTP Task] Installation connection failed.");
+          tempResult = 2;
+        }
+      } else {
+        webLog("[HTTP Task] Memory allocation failed for installation client/http");
+      }
+      
+      if (client != nullptr) delete client;
+      if (http != nullptr) delete http;
+      releaseSecureClientLock();
+    } else {
+      webLog("[HTTP Task] Installation registration skipped: secure client busy");
+      tempResult = 2;
+    }
+  } else {
+    webLog("[HTTP Task] Local fallback: Installation registered offline.");
+    ticket = "INS-" + String(random(100000, 999999));
+    tempResult = 1;
+  }
+
+  ivrInstallationTicket = ticket;
+  ivrInstallationResult = tempResult;
 
   delete data;
   vTaskDelete(NULL);
@@ -5060,14 +7140,25 @@ String getStateName(CallState state) {
   switch(state) {
     case STATE_IDLE:             return "IDLE";
     case STATE_RINGING:          return "RINGING";
-    case STATE_VERIFY_USER:      return "VERIFY USER";
     case STATE_ANSWERING:        return "ANSWERING";
     case STATE_CALL_CONNECTED:   return "CALL CONNECTED";
     case STATE_PLAY_WELCOME:     return "PLAY WELCOME";
+    case STATE_WAIT_LANGUAGE_DTMF: return "WAIT LANGUAGE DTMF";
+    case STATE_VERIFY_USER:      return "VERIFY USER";
+    case STATE_PLAY_VERIFICATION_SUCCESS: return "VERIFICATION SUCCESS";
     case STATE_PLAY_MENU:        return "PLAY MENU";
-    case STATE_WAIT_DTMF:        return "WAIT DTMF";
-    case STATE_PLAY_SELECTION:   return "PLAY SELECTION";
-    case STATE_RETURN_MENU:      return "RETURN MENU";
+    case STATE_WAIT_MENU_DTMF:    return "WAIT MENU DTMF";
+    case STATE_COLLECTING_WARRANTY_NO: return "COLLECTING WARRANTY NO";
+    case STATE_VERIFYING_WARRANTY: return "VERIFYING WARRANTY";
+    case STATE_COLLECTING_COMPLAINT_NO: return "COLLECTING COMPLAINT NO";
+    case STATE_REGISTERING_COMPLAINT: return "REGISTERING COMPLAINT";
+    case STATE_HELP_CENTER:      return "HELP CENTER";
+    case STATE_WAIT_HELP_CENTER_DTMF: return "WAIT HELP CENTER DTMF";
+    case STATE_COLLECTING_INSTALLATION_NO: return "COLLECTING INSTALLATION NO";
+    case STATE_REGISTERING_INSTALLATION: return "REGISTERING INSTALLATION";
+    case STATE_CONNECTING_CUSTOMER_CARE: return "CONNECTING CUSTOMER CARE";
+    case STATE_PLAY_REPEAT_MENU:  return "PLAY REPEAT MENU";
+    case STATE_PLAY_DISCONNECT_MESSAGE: return "PLAY DISCONNECT MESSAGE";
     case STATE_HANGUP:           return "HANGUP";
     case STATE_CALLBACK_DIALING: return "CALLBACK DIALING";
     case STATE_COLLECTING_PRODUCT_NO: return "WARRANTY INPUT";
@@ -5076,6 +7167,8 @@ String getStateName(CallState state) {
     case STATE_ENDED:            return "ENDED";
     case STATE_ACTIVE_CALL:      return "ACTIVE CALL";
     case STATE_COLLECTING_DTMF:  return "COLLECTING DTMF";
+    case STATE_PLAY_SELECTION:   return "PLAY SELECTION";
+    case STATE_RETURN_MENU:      return "RETURN MENU";
     default:                     return "UNKNOWN";
   }
 }
@@ -5085,6 +7178,10 @@ unsigned long getAudioDuration(uint8_t folder, uint8_t track) {
 }
 
 bool checkAudioFinished(unsigned long maxDurationMs) {
+  // Still waiting for the audioTask to pick up this pending request
+  if (nextAudioPending) {
+    return false;
+  }
   // If the background task set audioPlaying to false, playback has finished.
   if (!audioPlaying) {
     return true;
@@ -5156,97 +7253,4 @@ String getDFPlayerCompatiblePath(String filename) {
   return filename;
 }
 
-void processNewIvrDtmf(char key) {
-  webLog("[New IVR] Processing DTMF Key: " + String(key));
-  lastActivityTime = millis();
-  
-  if (ivrSelectedLanguage == 0) {
-    if (key == '1' || key == '2' || key == '3') {
-      ivrSelectedLanguage = key - '0';
-      webLog("[New IVR] Language selected: " + String(ivrSelectedLanguage));
-      
-      // Reset language warnings and timeout counts on successful selection
-      languageWarningPending = false;
-      languageDisconnectPending = false;
-      dtmfTimeoutCount = 0;
-      
-      // Record play start time for validation hold audio
-      validationHoldStart = millis();
-      
-      // Change state back to STATE_CALL_CONNECTED to wait for validation check
-      changeState(STATE_CALL_CONNECTED);
-      
-      // Play validation audio in selected language
-      if (ivrSelectedLanguage == 2) {
-        // Tamil hold
-        currentAudioFolder = 4;
-        currentAudioTrack = 8;
-      } else if (ivrSelectedLanguage == 3) {
-        // Hindi hold
-        currentAudioFolder = 4;
-        currentAudioTrack = 11;
-      } else {
-        // English hold
-        currentAudioFolder = 4;
-        currentAudioTrack = 1;
-      }
-      mp3Play(currentAudioFolder, currentAudioTrack);
-      lastAudioPlayMillis = millis();
-    } else {
-      webLog("[New IVR] Invalid language selection. Replaying Language Menu...");
-      changeState(STATE_RETURN_MENU);
-    }
-    return;
-  }
-  
-  if (callerIsRegistered) {
-    if (key == '1') {
-      // Warranty Check
-      webLog("[Registered IVR] Option 1 selected (Warranty).");
-      if (ivrSelectedLanguage == 2) {
-        playIvrAudio("/01/005.wav"); // Tamil "enter serial number" or fallback
-      } else if (ivrSelectedLanguage == 3) {
-        playIvrAudio("/04/014.wav"); // Hindi "enter serial number"
-      } else {
-        playIvrAudio("/01/005.wav"); // English/fallback
-      }
-      warrantyInputBuffer = "";
-      changeState(STATE_COLLECTING_PRODUCT_NO);
-    } else if (key == '2') {
-      // Complaint
-      webLog("[Registered IVR] Option 2 selected (Complaint).");
-      startComplaintRegistration();
-    } else if (key == '3') {
-      // Installation / Service
-      webLog("[Registered IVR] Option 3 selected (Installation).");
-      startAgentConnection();
-    } else if (key == '4') {
-      // Speak to Executive
-      webLog("[Registered IVR] Option 4 selected (Executive).");
-      startAgentConnection();
-    } else if (key == '#') {
-      webLog("[Registered IVR] '#' pressed. Replaying menu...");
-      changeState(STATE_RETURN_MENU);
-    } else if (key == '*') {
-      webLog("[Registered IVR] '*' pressed. Hanging up...");
-      changeState(STATE_HANGUP);
-    }
-    return;
-  }
-  
-  // Legacy / custom handler fallback
-  if (key >= '1' && key <= '9') {
-    int track = 2 + (key - '0');
-    currentAudioFolder = 1;
-    currentAudioTrack = track;
-    changeState(STATE_PLAY_SELECTION);
-    mp3Play(currentAudioFolder, currentAudioTrack);
-    lastAudioPlayMillis = millis();
-  } else if (key == '0') {
-    changeState(STATE_RETURN_MENU);
-  } else if (key == '#') {
-    changeState(STATE_RETURN_MENU);
-  } else if (key == '*') {
-    changeState(STATE_HANGUP);
-  }
-}
+
