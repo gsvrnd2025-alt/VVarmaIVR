@@ -3800,7 +3800,6 @@ void setupWebServer() {
         // Prefer gzip-compressed version (deployed by upload_to_sd.py)
         File f = myFS->open("/index.html.gz", FILE_READ);
         if (f) {
-          server.sendHeader("Content-Encoding", "gzip");
           server.sendHeader("Cache-Control", "no-cache");
           server.streamFile(f, "text/html");
           f.close();
@@ -5456,7 +5455,6 @@ void setupWebServer() {
             else if (path.endsWith(".jpg")) contentType = "image/jpeg";
             else if (path.endsWith(".ico")) contentType = "image/x-icon";
 
-            server.sendHeader("Content-Encoding", "gzip");
             server.streamFile(f, contentType);
             f.close();
             served = true;
