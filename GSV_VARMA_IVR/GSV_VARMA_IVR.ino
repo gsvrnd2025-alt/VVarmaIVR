@@ -3797,17 +3797,30 @@ void setupWebServer() {
     bool fileServed = false;
     if (currentCallState == STATE_IDLE && sdCardFound && myFS) {
       if (sdTake()) {
-        File f = myFS->open("/index.html", FILE_READ);
+        // Prefer gzip-compressed version (deployed by upload_to_sd.py)
+        File f = myFS->open("/index.html.gz", FILE_READ);
         if (f) {
+          server.sendHeader("Content-Encoding", "gzip");
+          server.sendHeader("Cache-Control", "no-cache");
           server.streamFile(f, "text/html");
           f.close();
           fileServed = true;
+        } else {
+          // Fall back to uncompressed index.html
+          f = myFS->open("/index.html", FILE_READ);
+          if (f) {
+            server.sendHeader("Cache-Control", "no-cache");
+            server.streamFile(f, "text/html");
+            f.close();
+            fileServed = true;
+          }
         }
         sdGive();
       }
     }
 
     if (!fileServed) {
+      // Fallback: serve embedded diagnostics page from flash
       server.setContentLength(CONTENT_LENGTH_UNKNOWN);
       server.send(200, "text/html", "");
       sendLargePage(index_html);
