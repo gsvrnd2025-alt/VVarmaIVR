@@ -57,6 +57,7 @@
 #include "index_html.h"
 #include "wifi_config_html.h"
 #include <vector>      // For std::vector used in sdDbFlushOfflineQueue
+#include <sqlite3.h>
 
 // Forward definition of WAV Header parsing structure to satisfy Arduino auto-prototypes
 struct WavHeaderInfo {
@@ -121,6 +122,7 @@ void sdGive() {
 
 FS* myFS = &SD;
 volatile bool serialUploadActive = false; // Suppress logging during serial file transfer
+volatile bool webUploadActive = false;    // Suppress logging/sync during web file upload
 
 // ==================== DAC AUDIO PLAYER INTEGRATION ====================
 
@@ -531,9 +533,9 @@ void mp3Init() {
     webLog("[Audio] ERROR: Failed to start hardware timer!");
   }
 
-  // Spawn audio task on Core 0 (small stack size required: 8KB)
+  // Spawn audio task on Core 0 (small stack size required: 4KB)
   BaseType_t res = xTaskCreatePinnedToCore(
-      audioTask, "audio_task", 12288, NULL, 5, NULL, 0);
+      audioTask, "audio_task", 4096, NULL, 5, NULL, 0);
   if (res != pdPASS) {
     webLog("[Audio] CRITICAL: Failed to create audioTask!");
   }
@@ -577,6 +579,8 @@ bool smsSystemActive = true;
 bool callerValidationEnabled = false; // Expose setting for sheets validation (default false to auto-answer)
 bool customIvrEnabled = false;        // Toggle custom interactive IVR flow (20 cases)
 String agentPhoneNumber = "+919092610415"; // Target number for connecting to agent
+String validationSource = "google_sheet"; // Choices: google_sheet, sd_card
+bool ivrSourceConfigurator = false;       // false = Flow Builder, true = Configurator Menu
 
 // Non-blocking welcome menu delay variables
 bool welcomeMenuPending = false;
@@ -632,9 +636,46 @@ enum CallState {
   STATE_COLLECTING_DTMF,
   STATE_PLAY_SELECTION,
   // Keep legacy mappings
-  STATE_RETURN_MENU
+  STATE_RETURN_MENU,
+  STATE_CUSTOM_IVR_RUN
 };
 CallState currentCallState = STATE_IDLE;
+
+struct CustomIvrNode {
+  String id;
+  String type;
+  String audio;
+  unsigned long delayBefore;
+  unsigned long delayAfter;
+  int repeatCount;
+  bool interruptible;
+  int timeout;
+  int maxAttempts;
+  String nextNode;
+  String optionKeys[12];
+  String optionNodes[12];
+  int optionCount;
+  String smsTemplate;
+  String varName;
+  String varValue;
+  String successNode;
+  String failNode;
+  String claimedNode;
+};
+
+struct IvrVariable {
+  String name;
+  String value;
+};
+
+CustomIvrNode activeNode;
+unsigned long nodeStateStartTime = 0;
+int nodeAttemptCount = 0;
+bool nodeAudioStarted = false;
+bool nodeDelayBeforeDone = false;
+bool nodeAudioDone = false;
+bool nodeDelayAfterDone = false;
+std::vector<IvrVariable> ivrVariables;
 
 // IVR Variables
 String callerNumber = "";
@@ -862,6 +903,19 @@ String getStateName(CallState state);
 void loadCustomersFromSD();
 void saveCustomersToSD(const String& jsonArray);
 bool isCustomerRegisteredLocal(const String& phone);
+
+// SQLite & Visual Builder Prototypes
+bool sqliteCheckWarranty(const String& code, String& outStatus);
+bool sqliteCheckUser(const String& phone, String& outName);
+void rebuildSqliteDbFromCsv();
+bool loadCustomIvrNode(String nodeId);
+void handleCustomIvrRun();
+uint32_t calculateCRC32(const String& str);
+void clearIvrVariables();
+void setIvrVariable(String name, String val);
+String getIvrVariable(String name);
+String parseTemplate(String templateStr);
+
 void periodicSyncTask(void* pvParameters);
 void startPeriodicSync();
 void triggerManualSync();
@@ -883,12 +937,12 @@ void sdDbFlushCallLogs(WiFiClientSecure *client, HTTPClient *http);
 void sdDbFlushSmsLogs(WiFiClientSecure *client, HTTPClient *http);
 void saveMobilesToCsv(const String& payload);
 bool saveVarmaDataStream(HTTPClient* http, int len);
-bool syncMobilesList(WiFiClientSecure *client, HTTPClient *http);
-bool syncVarmaDataPayload(WiFiClientSecure *client, HTTPClient *http);
+bool syncMobilesList();
+bool syncVarmaDataPayload();
 void sdDbQueueNewCustomer(const String& phone, const String& name, const String& product, const String& serial);
 void sdDbFlushNewCustomers();
-bool syncAllSheets(WiFiClientSecure *client, HTTPClient *http);
-bool downloadSheetToCsv(WiFiClientSecure *client, HTTPClient *http, const String& sheetName);
+bool syncAllSheets();
+bool downloadSheetToCsv(const String& sheetName);
 bool sdDbCheckWarrantyLocal(const String& code, String& outStatus);
 
 
@@ -991,17 +1045,11 @@ void playErrorSound() {
 
 // ==================== WIFI AP/STA LOGIC ====================
 void mDNS_begin() {
-  // CRITICAL: Only start mDNS when STA has a valid IP.
-  // Calling MDNS.begin() before WiFi connects registers the WRONG IP (AP IP or 0.0.0.0)
-  // which gets cached by Windows and blocks access via vvarmaivr.local.
-  IPAddress staIp = WiFi.localIP();
-  if (WiFi.status() != WL_CONNECTED || staIp == IPAddress(0, 0, 0, 0)) {
-    webLog("[mDNS] Skipped — STA not yet connected (will register once IP is assigned).");
+  IPAddress currentIP = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP() : WiFi.softAPIP();
+  if (currentIP == IPAddress(0, 0, 0, 0)) {
+    webLog("[mDNS] Skipped — no IP bound on STA or AP interfaces.");
     return;
   }
-
-  // Re-read IP (already valid since we checked WL_CONNECTED above)
-  staIp = WiFi.localIP();
 
   MDNS.end();
   delay(200); // Allow mdns stack to fully teardown
@@ -1009,13 +1057,12 @@ void mDNS_begin() {
     MDNS.addService("_http", "_tcp", 80);
     MDNS.addServiceTxt("_http", "_tcp", "id", myMac);
     MDNS.addServiceTxt("_http", "_tcp", "ver", FIRMWARE_VERSION);
-    webLog("mDNS responder active at http://" + String(DEVICE_NAME) + ".local (IP: " + staIp.toString() + ")");
+    webLog("mDNS responder active at http://" + String(DEVICE_NAME) + ".local (IP: " + currentIP.toString() + ")");
   } else {
     webLog("CRITICAL: mDNS startup failed");
   }
 
   // NBNS (NetBIOS Name Service) responds to NetBIOS name queries on port 137.
-  // Re-enabled to allow Windows devices to resolve http://vvarmaivr/ without Bonjour.
   NBNS.end();
   NBNS.begin(DEVICE_NAME);
   webLog("NetBIOS responder active at http://" + String(DEVICE_NAME));
@@ -1057,8 +1104,7 @@ void startAPMode() {
   dnsServer.start(53, "*", apIP);
   
   setupWebServer();
-  // mDNS is NOT started in AP-only mode — AP users reach the device via 192.168.4.1 directly.
-  // Starting mDNS here would advertise the AP IP (192.168.4.1) and corrupt the STA mDNS cache.
+  mDNS_begin();
 }
 
 void factoryReset() {
@@ -1191,6 +1237,11 @@ void sdDbCacheWarranty(const String& code, const String& status) {
 
 // Local DB warranty check (from downloaded Warranty_Register sheet)
 bool sdDbCheckWarrantyLocal(const String& code, String& outStatus) {
+  if (sqliteCheckWarranty(code, outStatus)) {
+    webLog("[SD-DB-SQLite] Warranty status match: " + code + " -> " + outStatus);
+    return true;
+  }
+
   if (!sdCardFound || !myFS || !sdTake()) return false;
   if (!myFS->exists("/db/warranty_register.csv")) { sdGive(); return false; }
   File f = myFS->open("/db/warranty_register.csv", FILE_READ);
@@ -1821,6 +1872,9 @@ void loadCustomersFromSD() {
   
   webLog("[LocalDB] Loaded " + String(localCustomerCount) + " customers from " + path);
   sdGive();
+
+  // Trigger SQLite Database Rebuild
+  rebuildSqliteDbFromCsv();
 }
 
 void saveMobilesToCsv(const String& payload) {
@@ -1896,60 +1950,73 @@ bool saveVarmaDataStream(HTTPClient* http, int len) {
   }
 }
 
-bool downloadSheetToCsv(WiFiClientSecure *client, HTTPClient *http, const String& sheetName) {
+bool downloadSheetToCsv(const String& sheetName) {
+  uint32_t freeH = ESP.getFreeHeap();
+  uint32_t maxBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+  webLog("[Sync] Heap before '" + sheetName + "': Free=" + String(freeH) + " MaxBlock=" + String(maxBlock));
+
   String encName = sheetName;
   encName.replace(" ", "%20");
   String url = "https://script.google.com/macros/s/" + scriptId + "/exec?action=getSheetCsv&sheetName=" + encName + "&sheetId=" + sheetId;
   
   webLog("[Sync] Downloading sheet '" + sheetName + "' as CSV...");
   
-  if (http->begin(*client, url)) {
-    http->setTimeout(30000);
-    http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    int httpCode = http->GET();
-    if (httpCode == HTTP_CODE_OK) {
-      if (!sdTake()) return false;
-      sdDbEnsureDirectories();
-      
-      String filename = sheetName;
-      filename.toLowerCase();
-      filename.replace(" ", "_");
-      String filepath = "/db/" + filename + ".csv";
-      
-      File f = myFS->open(filepath, "w");
-      if (f) {
-        int written = http->writeToStream(&f);
-        f.close();
-        sdGive();
-        if (written >= 0) {
-          webLog("[Sync] Saved " + String(written) + " bytes to " + filepath);
-          return true;
-        } else {
-          webLog("[Sync] Failed to write " + filepath + " stream: error " + String(written));
+  WiFiClientSecure *client = new WiFiClientSecure();
+  HTTPClient *http = new HTTPClient();
+  bool success = false;
+  
+  if (client != nullptr && http != nullptr) {
+    client->setInsecure();
+    if (http->begin(*client, url)) {
+      http->setTimeout(30000);
+      http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+      int httpCode = http->GET();
+      if (httpCode == HTTP_CODE_OK) {
+        if (sdTake()) {
+          sdDbEnsureDirectories();
+          
+          String filename = sheetName;
+          filename.toLowerCase();
+          filename.replace(" ", "_");
+          String filepath = "/db/" + filename + ".csv";
+          
+          File f = myFS->open(filepath, "w");
+          if (f) {
+            int written = http->writeToStream(&f);
+            f.close();
+            sdGive();
+            if (written >= 0) {
+              webLog("[Sync] Saved " + String(written) + " bytes to " + filepath);
+              success = true;
+            } else {
+              webLog("[Sync] Failed to write " + filepath + " stream: error " + String(written));
+            }
+          } else {
+            sdGive();
+            webLog("[Sync] Failed to open file for writing: " + filepath);
+          }
         }
       } else {
-        sdGive();
-        webLog("[Sync] Failed to open file for writing: " + filepath);
+        char sslErr[128] = {0};
+        client->lastError(sslErr, sizeof(sslErr));
+        webLog("[Sync] HTTP error downloading sheet '" + sheetName + "': " + String(httpCode) + " (TLS Err: " + String(sslErr) + ")");
       }
-    } else {
-      char sslErr[128] = {0};
-      client->lastError(sslErr, sizeof(sslErr));
-      webLog("[Sync] HTTP error downloading sheet '" + sheetName + "': " + String(httpCode) + " (TLS Err: " + String(sslErr) + ")");
+      http->end();
     }
-    http->end();
   }
-  return false;
+  if (client != nullptr) delete client;
+  if (http != nullptr) delete http;
+  return success;
 }
 
-bool syncAllSheets(WiFiClientSecure *client, HTTPClient *http) {
+bool syncAllSheets() {
   bool anyOk = false;
 
   // 1. IVR Registered Users — primary phone validation list
   webLog("[Sync] Downloading IVR_Registered_Users...");
-  bool usersOk = downloadSheetToCsv(client, http, "IVR_Registered_Users");
+  bool usersOk = downloadSheetToCsv("IVR_Registered_Users");
   if (usersOk) {
     webLog("[Sync] IVR_Registered_Users updated successfully.");
-    loadCustomersFromSD();
     anyOk = true;
   } else {
     webLog("[Sync] Failed to download IVR_Registered_Users.");
@@ -1958,7 +2025,7 @@ bool syncAllSheets(WiFiClientSecure *client, HTTPClient *http) {
 
   // 2. Warranty Register — enables fast offline warranty lookups
   webLog("[Sync] Downloading Warranty_Register...");
-  bool warrantyOk = downloadSheetToCsv(client, http, "Warranty_Register");
+  bool warrantyOk = downloadSheetToCsv("Warranty_Register");
   if (warrantyOk) {
     webLog("[Sync] Warranty_Register synced to /db/warranty_register.csv");
     anyOk = true;
@@ -1969,7 +2036,7 @@ bool syncAllSheets(WiFiClientSecure *client, HTTPClient *http) {
 
   // 3. Party List — broader customer/dealer/tech registered contact list
   webLog("[Sync] Downloading Party_List...");
-  bool partyOk = downloadSheetToCsv(client, http, "Party_List");
+  bool partyOk = downloadSheetToCsv("Party_List");
   if (partyOk) {
     webLog("[Sync] Party_List synced to /db/party_list.csv");
     anyOk = true;
@@ -1980,51 +2047,76 @@ bool syncAllSheets(WiFiClientSecure *client, HTTPClient *http) {
   return anyOk; // Success if at least one sheet downloaded
 }
 
-bool syncMobilesList(WiFiClientSecure *client, HTTPClient *http) {
+bool syncMobilesList() {
   String url = "https://script.google.com/macros/s/" + scriptId + "/exec?action=get_mobiles&sheetId=" + sheetId;
   webLog("[Sync] Syncing customers list from Sheets...");
-  if (http->begin(*client, url)) {
-    http->setTimeout(25000);
-    http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    int httpCode = http->GET();
-    if (httpCode == HTTP_CODE_OK) {
-      String payload = http->getString();
-      saveMobilesToCsv(payload);
+  
+  WiFiClientSecure *client = new WiFiClientSecure();
+  HTTPClient *http = new HTTPClient();
+  bool success = false;
+  
+  if (client != nullptr && http != nullptr) {
+    client->setInsecure();
+    if (http->begin(*client, url)) {
+      http->setTimeout(25000);
+      http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+      int httpCode = http->GET();
+      if (httpCode == HTTP_CODE_OK) {
+        String payload = http->getString();
+        saveMobilesToCsv(payload);
+        success = true;
+      } else {
+        char sslErr[128] = {0};
+        client->lastError(sslErr, sizeof(sslErr));
+        webLog("[Sync] Customers list HTTP error: " + String(httpCode) + " (TLS Err: " + String(sslErr) + ")");
+      }
       http->end();
-      return true;
-    } else {
-      char sslErr[128] = {0};
-      client->lastError(sslErr, sizeof(sslErr));
-      webLog("[Sync] Customers list HTTP error: " + String(httpCode) + " (TLS Err: " + String(sslErr) + ")");
     }
-    http->end();
   }
-  return false;
+  if (client != nullptr) delete client;
+  if (http != nullptr) delete http;
+  return success;
 }
 
-bool syncVarmaDataPayload(WiFiClientSecure *client, HTTPClient *http) {
+bool syncVarmaDataPayload() {
   String url = "https://script.google.com/macros/s/" + scriptId + "/exec?action=getVarmaData&sheetId=" + sheetId + "&mac=" + myMac;
   webLog("[Sync] Syncing full dashboard data (streaming to SD)...");
-  if (http->begin(*client, url)) {
-    http->setTimeout(40000);
-    http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    int httpCode = http->GET();
-    if (httpCode == HTTP_CODE_OK) {
-      int len = http->getSize();
-      bool ok = saveVarmaDataStream(http, len);
+  
+  WiFiClientSecure *client = new WiFiClientSecure();
+  HTTPClient *http = new HTTPClient();
+  bool success = false;
+  
+  if (client != nullptr && http != nullptr) {
+    client->setInsecure();
+    if (http->begin(*client, url)) {
+      http->setTimeout(40000);
+      http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+      int httpCode = http->GET();
+      if (httpCode == HTTP_CODE_OK) {
+        int len = http->getSize();
+        success = saveVarmaDataStream(http, len);
+      } else {
+        char sslErr[128] = {0};
+        client->lastError(sslErr, sizeof(sslErr));
+        webLog("[Sync] VarmaData HTTP error: " + String(httpCode) + " (TLS Err: " + String(sslErr) + ")");
+      }
       http->end();
-      return ok;
-    } else {
-      char sslErr[128] = {0};
-      client->lastError(sslErr, sizeof(sslErr));
-      webLog("[Sync] VarmaData HTTP error: " + String(httpCode) + " (TLS Err: " + String(sslErr) + ")");
     }
-    http->end();
   }
-  return false;
+  if (client != nullptr) delete client;
+  if (http != nullptr) delete http;
+  return success;
 }
 
 bool isCustomerRegisteredLocal(const String& phone) {
+  if (validationSource == "sd_card") {
+    String dummyName = "";
+    if (sqliteCheckUser(phone, dummyName)) {
+      webLog("[LocalDB-SQLite] MATCH: " + phone + " -> " + dummyName);
+      return true;
+    }
+  }
+
   if (localCustomers == nullptr || localCustomerCount == 0) return false;
   
   // Normalize input phone
@@ -2082,54 +2174,64 @@ void periodicSyncTask(void* pvParameters) {
       if (acquireSecureClientLock(10000)) { // Wait up to 10 seconds for lock
         webLog("[PeriodicSync] Starting periodic data sync from Google Sheets...");
         
-        WiFiClientSecure *client = new WiFiClientSecure();
-        HTTPClient *http = new HTTPClient();
-        
-        if (client != nullptr && http != nullptr) {
-          client->setInsecure();
-          
-          // ── Phase 1: Flush offline queued data from SD → Google Sheets ──
-          sdDbFlushOfflineQueue(client, http);   // Complaints queue
-          sdDbFlushNewCustomers(client, http);   // New customers queue
-          sdDbFlushInstallations(client, http);  // Installations queue
-          sdDbFlushCallLogs(client, http);        // Call log entries
-          sdDbFlushSmsLogs(client, http);         // SMS log entries
-          
-          // ── Phase 2: Pull updated Google Sheets data → SD card ──
-          bool allSheetsOk = syncAllSheets(client, http);   // Warranty, Party, Users CSVs
-          bool mobilesOk   = syncMobilesList(client, http); // Customer list JSON
-          bool dataOk      = syncVarmaDataPayload(client, http); // Full dashboard JSON
-          
-          // Update sync timestamp if ANY sub-sync succeeded (not all-or-nothing)
-          bool anySuccess = allSheetsOk || mobilesOk || dataOk;
-          if (anySuccess) {
-            unsigned long uptimeSecs = millis() / 1000;
-            unsigned long hrs = uptimeSecs / 3600;
-            unsigned long mins = (uptimeSecs % 3600) / 60;
-            char timeBuf[16];
-            snprintf(timeBuf, sizeof(timeBuf), "%02dh %02dm ago", (int)hrs, (int)mins);
-            lastSyncTimeStr = String(timeBuf);
-            lastPeriodicSyncMillis = millis();
-          }
-          
-          if (allSheetsOk && mobilesOk && dataOk) {
-            webLog("[PeriodicSync] Full sync completed. " + String(localCustomerCount) + " customers loaded.");
-          } else if (anySuccess) {
-            webLog("[PeriodicSync] Partial sync completed (sheets=" + String(allSheetsOk) +
-                   " mobiles=" + String(mobilesOk) + " data=" + String(dataOk) + ")");
-            localDbSyncErrors++;
-          } else {
-            webLog("[PeriodicSync] Full sync FAILED. Check WiFi / Script ID / GSheets.");
-            localDbSyncErrors++;
-          }
-        } else {
-          webLog("[PeriodicSync] Memory allocation failed for sync client.");
+        bool serverWasRunning = serverStarted;
+        if (serverWasRunning) {
+          server.stop();
+          serverStarted = false;
+          webLog("[PeriodicSync] Web server stopped to maximize heap for TLS.");
+          vTaskDelay(pdMS_TO_TICKS(100)); // Allow sockets to clean up
         }
         
-        if (client != nullptr) delete client;
-        if (http != nullptr) delete http;
+        // ── Phase 1: Flush offline queued data from SD → Google Sheets ──
+        {
+          WiFiClientSecure client;
+          client.setInsecure();
+          HTTPClient http;
+          sdDbFlushOfflineQueue(&client, &http);   // Complaints queue
+          sdDbFlushNewCustomers(&client, &http);   // New customers queue
+          sdDbFlushInstallations(&client, &http);  // Installations queue
+          sdDbFlushCallLogs(&client, &http);        // Call log entries
+          sdDbFlushSmsLogs(&client, &http);         // SMS log entries
+        }
+        
+        // ── Phase 2: Pull updated Google Sheets data → SD card ──
+        bool allSheetsOk = syncAllSheets();   // Warranty, Party, Users CSVs
+        bool mobilesOk   = syncMobilesList(); // Customer list JSON
+        bool dataOk      = syncVarmaDataPayload(); // Full dashboard JSON
         
         releaseSecureClientLock();
+        
+        // Restart Web Server immediately after downloads finish to restore dashboard access
+        if (serverWasRunning || !serverStarted) {
+          setupWebServer();
+          webLog("[PeriodicSync] Web server restarted.");
+        }
+        
+        // Update sync timestamp and reload DB if ANY sub-sync succeeded
+        bool anySuccess = allSheetsOk || mobilesOk || dataOk;
+        if (anySuccess) {
+          unsigned long uptimeSecs = millis() / 1000;
+          unsigned long hrs = uptimeSecs / 3600;
+          unsigned long mins = (uptimeSecs % 3600) / 60;
+          char timeBuf[16];
+          snprintf(timeBuf, sizeof(timeBuf), "%02dh %02dm ago", (int)hrs, (int)mins);
+          
+          loadCustomersFromSD();    // Load fallback array
+          
+          lastSyncTimeStr = String(timeBuf);
+          lastPeriodicSyncMillis = millis();
+        }
+        
+        if (allSheetsOk && mobilesOk && dataOk) {
+          webLog("[PeriodicSync] Full sync completed. Active customers: " + String(localCustomerCount));
+        } else if (anySuccess) {
+          webLog("[PeriodicSync] Partial sync completed (sheets=" + String(allSheetsOk) +
+                 " mobiles=" + String(mobilesOk) + " data=" + String(dataOk) + "). Active customers: " + String(localCustomerCount));
+          localDbSyncErrors++;
+        } else {
+          webLog("[PeriodicSync] Full sync FAILED. Check WiFi / Script ID / GSheets.");
+          localDbSyncErrors++;
+        }
       } else {
         webLog("[PeriodicSync] Skipped: secure client lock busy.");
       }
@@ -2148,7 +2250,7 @@ void startPeriodicSync() {
     periodicSyncRunning = true;
     // Ensure /db directory exists on SD before sync starts
     sdDbEnsureDirectories();
-    xTaskCreatePinnedToCore(periodicSyncTask, "periodic_sync", 12288, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(periodicSyncTask, "periodic_sync", 12288, NULL, 0, NULL, 0); // Priority 0 to prevent watchdog starvation
     webLog("[PeriodicSync] Periodic sync task launched.");
   }
 }
@@ -2158,47 +2260,58 @@ void startPeriodicSync() {
 static void manualSyncTaskFn(void* pvParameters) {
   if (WiFi.status() == WL_CONNECTED && scriptId.length() > 0) {
     if (acquireSecureClientLock(15000)) { // Wait up to 15 seconds for lock
-      WiFiClientSecure *client = new WiFiClientSecure();
-      HTTPClient *http = new HTTPClient();
+      webLog("[ManualSync] Starting manual sync...");
       
-      if (client != nullptr && http != nullptr) {
-        client->setInsecure();
-        
-        // ── Phase 1: Flush all offline queued data from SD → Google Sheets ──
-        webLog("[ManualSync] Phase 1: Flushing offline queues...");
-        sdDbFlushOfflineQueue(client, http);   // Complaints queue
-        sdDbFlushNewCustomers(client, http);   // New customers queue
-        sdDbFlushInstallations(client, http);  // Installations queue
-        sdDbFlushCallLogs(client, http);        // Call log entries
-        sdDbFlushSmsLogs(client, http);         // SMS log entries
-        
-        // ── Phase 2: Pull updated Google Sheets data → SD card ──
-        webLog("[ManualSync] Phase 2: Pulling sheets from Google Sheets...");
-        bool allSheetsOk = syncAllSheets(client, http);   // Warranty, Party, Users CSVs
-        bool mobilesOk   = syncMobilesList(client, http); // Customer list JSON
-        bool dataOk      = syncVarmaDataPayload(client, http); // Full dashboard JSON
-        
-        bool anySuccess = allSheetsOk || mobilesOk || dataOk;
-        if (anySuccess) {
-          unsigned long uptimeSecs = millis() / 1000;
-          unsigned long hrs = uptimeSecs / 3600;
-          unsigned long mins = (uptimeSecs % 3600) / 60;
-          char timeBuf[16];
-          snprintf(timeBuf, sizeof(timeBuf), "%02dh %02dm ago", (int)hrs, (int)mins);
-          lastSyncTimeStr = String(timeBuf);
-          lastPeriodicSyncMillis = millis();
-          webLog("[ManualSync] Sync completed (sheets=" + String(allSheetsOk) +
-                 " mobiles=" + String(mobilesOk) + " data=" + String(dataOk) + "). " +
-                 String(localCustomerCount) + " customers.");
-        } else {
-          webLog("[ManualSync] Sync failed — check WiFi / Script ID.");
-          localDbSyncErrors++;
-        }
+      bool serverWasRunning = serverStarted;
+      if (serverWasRunning) {
+        server.stop();
+        serverStarted = false;
+        webLog("[ManualSync] Web server stopped to maximize heap for TLS.");
+        vTaskDelay(pdMS_TO_TICKS(100)); // Allow sockets to clean up
       }
-      if (client != nullptr) delete client;
-      if (http != nullptr) delete http;
+      
+      // ── Phase 1: Flush all offline queued data from SD → Google Sheets ──
+      {
+        WiFiClientSecure client;
+        client.setInsecure();
+        HTTPClient http;
+        sdDbFlushOfflineQueue(&client, &http);   // Complaints queue
+        sdDbFlushNewCustomers(&client, &http);   // New customers queue
+        sdDbFlushInstallations(&client, &http);  // Installations queue
+        sdDbFlushCallLogs(&client, &http);        // Call log entries
+        sdDbFlushSmsLogs(&client, &http);         // SMS log entries
+      }
+      
+      // ── Phase 2: Pull updated Google Sheets data → SD card ──
+      bool allSheetsOk = syncAllSheets();   // Warranty, Party, Users CSVs
+      bool mobilesOk   = syncMobilesList(); // Customer list JSON
+      bool dataOk      = syncVarmaDataPayload(); // Full dashboard JSON
       
       releaseSecureClientLock();
+      
+      if (serverWasRunning || !serverStarted) {
+        setupWebServer();
+        webLog("[ManualSync] Web server restarted.");
+      }
+      
+      bool anySuccess = allSheetsOk || mobilesOk || dataOk;
+      if (anySuccess) {
+        unsigned long uptimeSecs = millis() / 1000;
+        unsigned long hrs = uptimeSecs / 3600;
+        unsigned long mins = (uptimeSecs % 3600) / 60;
+        char timeBuf[16];
+        snprintf(timeBuf, sizeof(timeBuf), "%02dh %02dm ago", (int)hrs, (int)mins);
+        
+        loadCustomersFromSD();
+        
+        lastSyncTimeStr = String(timeBuf);
+        lastPeriodicSyncMillis = millis();
+        webLog("[ManualSync] Sync completed (sheets=" + String(allSheetsOk) +
+               " mobiles=" + String(mobilesOk) + " data=" + String(dataOk) + "). Active customers: " + String(localCustomerCount));
+      } else {
+        webLog("[ManualSync] Sync failed — check WiFi / Script ID.");
+        localDbSyncErrors++;
+      }
     } else {
       webLog("[ManualSync] Failed to acquire secure client lock (busy).");
       localDbSyncErrors++;
@@ -2213,8 +2326,8 @@ static void manualSyncTaskFn(void* pvParameters) {
 void triggerManualSync() {
   webLog("[ManualSync] Manual sync triggered by user.");
   manualSyncRunning = true;
-  // Spawn a one-shot named task (FreeRTOS requires plain C function pointer, not lambda)
-  xTaskCreatePinnedToCore(manualSyncTaskFn, "manual_sync", 12288, NULL, 1, NULL, 0);
+  // Spawn a one-shot named task at Priority 0 to prevent CPU0 starving
+  xTaskCreatePinnedToCore(manualSyncTaskFn, "manual_sync", 12288, NULL, 0, NULL, 0);
 }
 
 
@@ -2641,14 +2754,26 @@ void changeState(CallState newState) {
     case STATE_CALL_CONNECTED:
       digitalWrite(LED_PIN, LOW); 
       digitalWrite(LED_GREEN, HIGH);
-      webLog("[New IVR] Call connected. Playing initial welcome/language selection /01/001.wav...");
-      currentAudioFolder = 1;
-      currentAudioTrack = 1; // Play /01/001.wav
-      dtmfTimeoutCount = 0;
-      mp3Play(currentAudioFolder, currentAudioTrack);
-      lastAudioPlayMillis = millis();
-      lastActivityTime = millis();
-      changeState(STATE_PLAY_WELCOME);
+      if (customIvrEnabled) {
+        webLog("[CustomIVR] Call connected. Initializing custom flow...");
+        clearIvrVariables();
+        setIvrVariable("Phone", callerNumber);
+        if (loadCustomIvrNode("start")) {
+          changeState(STATE_CUSTOM_IVR_RUN);
+        } else {
+          webLog("[CustomIVR] Failed to load start node. Hanging up.");
+          changeState(STATE_HANGUP);
+        }
+      } else {
+        webLog("[New IVR] Call connected. Playing initial welcome/language selection /01/001.wav...");
+        currentAudioFolder = 1;
+        currentAudioTrack = 1; // Play /01/001.wav
+        dtmfTimeoutCount = 0;
+        mp3Play(currentAudioFolder, currentAudioTrack);
+        lastAudioPlayMillis = millis();
+        lastActivityTime = millis();
+        changeState(STATE_PLAY_WELCOME);
+      }
       break;
 
     case STATE_ENDED:
@@ -3567,28 +3692,58 @@ void printDirectory(String dirPath, bool& first) {
 }
 
 File uploadFile;
+static bool uploadSdMutexHeld = false; // Track mutex held across START to END callbacks
+
 void handleFileUpload() {
-  if (server.uri() != "/upload_audio") return;
+  if (server.uri() != "/upload_audio" && server.uri() != "/upload_file") return;
   HTTPUpload& upload = server.upload();
+
   if (upload.status == UPLOAD_FILE_START) {
     String filename = upload.filename;
     if (!filename.startsWith("/")) filename = "/" + filename;
-    webLog("SD Upload Start: " + filename);
+    webLog("[Upload] Start: " + filename);
     createParentDirs(filename);
-    uploadFile = myFS->open(filename, "w");
+    webUploadActive = true; // Tell sdTake() in PeriodicSync to wait
+    // Acquire SD mutex and HOLD IT for the entire upload.
+    // This prevents ALL concurrent SD ops from corrupting SdFat shared sector cache.
+    uploadSdMutexHeld = sdTake(30000);
+    if (uploadSdMutexHeld) {
+      uploadFile = myFS->open(filename, "w");
+      // DO NOT call sdGive() here - hold mutex until END or ABORTED
+    }
+
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     lastSdActivityMillis = millis();
-    if (uploadFile) {
+    if (uploadFile && uploadSdMutexHeld) {
+      // Mutex already held since START - write directly without sdTake/sdGive
       uploadFile.write(upload.buf, upload.currentSize);
     }
+
   } else if (upload.status == UPLOAD_FILE_END) {
     if (uploadFile) {
+      uploadFile.flush();
       uploadFile.close();
-      String filename = upload.filename;
-      if (!filename.startsWith("/")) filename = "/" + filename;
-      webLog("SD Upload End: " + filename + " Size: " + String(upload.totalSize));
-      updateSDCache();
     }
+    if (uploadSdMutexHeld) {
+      sdGive();
+      uploadSdMutexHeld = false;
+    }
+    webUploadActive = false;
+    String filename = upload.filename;
+    if (!filename.startsWith("/")) filename = "/" + filename;
+    webLog("[Upload] End: " + filename + " Size: " + String(upload.totalSize));
+    updateSDCache();
+
+  } else if (upload.status == UPLOAD_FILE_ABORTED) {
+    if (uploadFile) {
+      uploadFile.close();
+    }
+    if (uploadSdMutexHeld) {
+      sdGive();
+      uploadSdMutexHeld = false;
+    }
+    webUploadActive = false;
+    webLog("[Upload] ABORTED");
   }
 }
 
@@ -4012,15 +4167,24 @@ void setupWebServer() {
     if (server.hasArg("agentPhoneNumber")) {
       agentPhoneNumber = server.arg("agentPhoneNumber");
     }
+    if (server.hasArg("validationSource")) {
+      validationSource = server.arg("validationSource");
+      if (!isPrintableASCII(validationSource)) validationSource = "google_sheet";
+    }
+    if (server.hasArg("ivrSourceConfigurator")) {
+      ivrSourceConfigurator = server.arg("ivrSourceConfigurator") == "true";
+    }
     preferences.begin("wifi-config", false);
     preferences.putBool("callSysAct", callSystemActive);
     preferences.putBool("smsSysAct", smsSystemActive);
     preferences.putBool("callValEn", callerValidationEnabled);
     preferences.putBool("customIvrEn", customIvrEnabled);
     preferences.putString("agentPhone", agentPhoneNumber);
+    preferences.putString("valSource", validationSource);
+    preferences.putBool("ivrSrcConfig", ivrSourceConfigurator);
     preferences.end();
     
-    webLog("GSM Settings updated: Call=" + String(callSystemActive ? "ON" : "OFF") + ", SMS=" + String(smsSystemActive ? "ON" : "OFF") + ", Validation=" + String(callerValidationEnabled ? "ON" : "OFF") + ", CustomIVR=" + String(customIvrEnabled ? "ON" : "OFF"));
+    webLog("GSM Settings updated: Call=" + String(callSystemActive ? "ON" : "OFF") + ", SMS=" + String(smsSystemActive ? "ON" : "OFF") + ", Validation=" + String(callerValidationEnabled ? "ON" : "OFF") + ", CustomIVR=" + String(customIvrEnabled ? "ON" : "OFF") + ", ValSource=" + validationSource);
     server.send(200, "application/json", "{\"success\":true}");
   });
 
@@ -4714,6 +4878,10 @@ void setupWebServer() {
     server.send(200, "application/json", "{\"success\":true}");
   }, handleFileUpload);
 
+  server.on("/upload_file", HTTP_POST, []() {
+    server.send(200, "application/json", "{\"success\":true}");
+  }, handleFileUpload);
+
   // Chunked file upload — accepts file data in small pieces (max ~4KB each).
   // POST /chunk_upload?path=/index.html&offset=0&total=632926
   // Body = raw binary chunk. Reliable for large files that overwhelm single-POST TCP buffers.
@@ -5088,13 +5256,227 @@ void setupWebServer() {
   });
   // ==================== END LOCAL DB SYNC ROUTES ====================
 
+  // ==================== VISUAL IVR BUILDER REST APIs ====================
+
+  // GET /api/sms_templates — list all SMS template files from /sms_templates/
+  server.on("/api/sms_templates", HTTP_GET, []() {
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    String json = "[";
+    bool first = true;
+    if (sdCardFound && myFS && sdTake()) {
+      File dir = myFS->open("/sms_templates");
+      if (dir && dir.isDirectory()) {
+        File entry = dir.openNextFile();
+        while (entry) {
+          if (!entry.isDirectory()) {
+            String fname = String(entry.name());
+            if (!first) json += ",";
+            json += "{\"name\":\"" + fname + "\",\"size\":" + String(entry.size()) + "}";
+            first = false;
+          }
+          entry.close();
+          entry = dir.openNextFile();
+        }
+        dir.close();
+      }
+      sdGive();
+    }
+    json += "]";
+    server.send(200, "application/json", json);
+  });
+
+  // POST /api/sms_templates — save an SMS template by name
+  server.on("/api/sms_templates", HTTP_POST, []() {
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    if (!server.hasArg("name") || !server.hasArg("text")) {
+      server.send(400, "application/json", "{\"error\":\"Missing name or text\"}");
+      return;
+    }
+    String tname = server.arg("name");
+    String ttext = server.arg("text");
+    if (sdCardFound && myFS && sdTake()) {
+      if (!myFS->exists("/sms_templates")) myFS->mkdir("/sms_templates");
+      File f = myFS->open("/sms_templates/" + tname, FILE_WRITE);
+      if (f) { f.print(ttext); f.close(); sdGive(); updateSDCache(); server.send(200, "application/json", "{\"success\":true}"); return; }
+      sdGive();
+    }
+    server.send(500, "application/json", "{\"error\":\"Write failed\"}");
+  });
+
+  // POST /api/reload_ivr — re-reads IVR flow JSON and rebuilds SQLite
+  server.on("/api/reload_ivr", HTTP_POST, []() {
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    loadCustomersFromSD();
+    webLog("[API] IVR config reloaded and SQLite rebuilt.");
+    server.send(200, "application/json", "{\"success\":true}");
+  });
+
+  // GET /api/customers — return customer list as JSON (alias for /get_mobiles)
+  server.on("/api/customers", HTTP_GET, handleGetMobiles);
+
+  // GET /api/voice_library — list all voice/audio files on SD card
+  server.on("/api/voice_library", HTTP_GET, []() {
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    server.send(200, "application/json", "");
+    server.sendContent("[");
+    bool first = true;
+    if (sdCardFound && myFS && sdTake()) {
+      std::function<void(String)> scanDir = [&](String path) {
+        File dir = myFS->open(path);
+        if (!dir || !dir.isDirectory()) return;
+        File entry = dir.openNextFile();
+        while (entry) {
+          String ename = String(entry.name());
+          String epath = path + "/" + ename;
+          if (entry.isDirectory()) {
+            scanDir(epath);
+          } else {
+            String low = ename;
+            low.toLowerCase();
+            if (low.endsWith(".wav") || low.endsWith(".mp3")) {
+              if (!first) server.sendContent(",");
+              first = false;
+              server.sendContent("{\"path\":\"" + epath + "\",\"name\":\"" + ename + "\",\"size\":" + String(entry.size()) + "}");
+            }
+          }
+          entry.close();
+          entry = dir.openNextFile();
+          yield();
+        }
+        dir.close();
+      };
+      scanDir("");
+      sdGive();
+    }
+    server.sendContent("]");
+    server.sendContent("");
+  });
+
+  // POST /api/rename_voice — rename a voice/audio file on SD card
+  server.on("/api/rename_voice", HTTP_POST, []() {
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    if (!server.hasArg("from") || !server.hasArg("to")) {
+      server.send(400, "application/json", "{\"error\":\"Missing from/to\"}");
+      return;
+    }
+    String fromPath = server.arg("from");
+    String toPath   = server.arg("to");
+    if (!fromPath.startsWith("/")) fromPath = "/" + fromPath;
+    if (!toPath.startsWith("/"))   toPath   = "/" + toPath;
+    if (sdCardFound && myFS && sdTake()) {
+      if (myFS->exists(fromPath)) {
+        myFS->rename(fromPath, toPath);
+        sdGive(); updateSDCache();
+        server.send(200, "application/json", "{\"success\":true}");
+      } else {
+        sdGive();
+        server.send(404, "application/json", "{\"error\":\"Source file not found\"}");
+      }
+    } else {
+      server.send(503, "application/json", "{\"error\":\"SD not available\"}");
+    }
+  });
+
+  // GET /api/flow_stats — return statistics about the current IVR flow
+  server.on("/api/flow_stats", HTTP_GET, []() {
+    if (!isAuth()) { server.send(403, "application/json", "{\"error\":\"Unauthorized\"}"); return; }
+    String json = "{";
+    json += "\"customIvrEnabled\":" + String(customIvrEnabled ? "true" : "false") + ",";
+    json += "\"ivrSourceConfigurator\":" + String(ivrSourceConfigurator ? "true" : "false") + ",";
+    json += "\"validationSource\":\"" + validationSource + "\",";
+    json += "\"localCustomerCount\":" + String(localCustomerCount) + ",";
+    json += "\"activeNodeId\":\"" + activeNode.id + "\",";
+    json += "\"activeNodeType\":\"" + activeNode.type + "\",";
+    json += "\"callState\":\"" + getStateName(currentCallState) + "\"";
+    json += "}";
+    server.send(200, "application/json", json);
+  });
+
+  // ==================== END VISUAL IVR BUILDER REST APIs ====================
+
   server.onNotFound([]() {
     if (currentSystemState == SYSTEM_WIFI_CONFIG) {
       server.sendHeader("Location", "http://" + WiFi.softAPIP().toString() + "/", true);
       server.send(302, "text/plain", "");
-    } else {
-      server.send(404, "text/plain", "Route Not Found");
+      return;
     }
+
+    String path = server.uri();
+    
+    // Serve static files from SD Card if found
+    if (sdCardFound && myFS && (currentCallState == STATE_IDLE)) {
+      lastSdActivityMillis = millis();
+      
+      // Safety/auth check: protect system config files or data from unauthorized access
+      if (path.indexOf("/db/") != -1 || path.indexOf("/varma_data.json") != -1 || path == "/customers.csv") {
+        if (!isAuth()) {
+          server.send(403, "text/plain", "Unauthorized");
+          return;
+        }
+      }
+
+      // Check Accept-Encoding for gzip support
+      bool hasGzip = false;
+      for (int i = 0; i < server.headers(); i++) {
+        if (server.headerName(i).equalsIgnoreCase("Accept-Encoding")) {
+          if (server.header(i).indexOf("gzip") != -1) {
+            hasGzip = true;
+          }
+          break;
+        }
+      }
+
+      String gzPath = path + ".gz";
+      bool served = false;
+
+      if (hasGzip && myFS->exists(gzPath)) {
+        if (sdTake()) {
+          File f = myFS->open(gzPath, FILE_READ);
+          if (f) {
+            String contentType = "application/octet-stream";
+            if (path.endsWith(".html")) contentType = "text/html";
+            else if (path.endsWith(".css")) contentType = "text/css";
+            else if (path.endsWith(".js")) contentType = "application/javascript";
+            else if (path.endsWith(".json")) contentType = "application/json";
+            else if (path.endsWith(".png")) contentType = "image/png";
+            else if (path.endsWith(".jpg")) contentType = "image/jpeg";
+            else if (path.endsWith(".ico")) contentType = "image/x-icon";
+
+            server.sendHeader("Content-Encoding", "gzip");
+            server.streamFile(f, contentType);
+            f.close();
+            served = true;
+          }
+          sdGive();
+        }
+      } else if (myFS->exists(path)) {
+        if (sdTake()) {
+          File f = myFS->open(path, FILE_READ);
+          if (f) {
+            String contentType = "application/octet-stream";
+            if (path.endsWith(".html")) contentType = "text/html";
+            else if (path.endsWith(".css")) contentType = "text/css";
+            else if (path.endsWith(".js")) contentType = "application/javascript";
+            else if (path.endsWith(".json")) contentType = "application/json";
+            else if (path.endsWith(".png")) contentType = "image/png";
+            else if (path.endsWith(".jpg")) contentType = "image/jpeg";
+            else if (path.endsWith(".ico")) contentType = "image/x-icon";
+            else if (path.endsWith(".wav")) contentType = "audio/wav";
+            else if (path.endsWith(".mp3")) contentType = "audio/mpeg";
+
+            server.streamFile(f, contentType);
+            f.close();
+            served = true;
+          }
+          sdGive();
+        }
+      }
+
+      if (served) return;
+    }
+
+    server.send(404, "text/plain", "Route Not Found");
   });
 
   server.begin();
@@ -5496,6 +5878,7 @@ void setup() {
   logMutex = xSemaphoreCreateMutex();
   audioMutex = xSemaphoreCreateMutex();
   delay(1000);
+  sqlite3_initialize();
 
   // Configure LED pins EARLY so the user sees life immediately on power-on
   pinMode(LED_PIN, OUTPUT);
@@ -5691,6 +6074,9 @@ void setup() {
   customIvrEnabled = preferences.getBool("customIvrEn", false);
   agentPhoneNumber = preferences.getString("agentPhone", "+919092610415");
   if (!isPrintableASCII(agentPhoneNumber)) agentPhoneNumber = "+919092610415";
+  validationSource = preferences.getString("valSource", "google_sheet");
+  if (!isPrintableASCII(validationSource)) validationSource = "google_sheet";
+  ivrSourceConfigurator = preferences.getBool("ivrSrcConfig", false);
   
   testModeEnabled = preferences.getBool("testMode", false);
   testAutoAttend = preferences.getBool("testAttend", false);
@@ -5704,7 +6090,7 @@ void setup() {
   if (!isPrintableASCII(otaFirmwareUrl)) otaFirmwareUrl = "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/firmware.bin";
   otaDescriptorUrl = preferences.getString("otaDescUrl", "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/version.json");
   if (!isPrintableASCII(otaDescriptorUrl)) otaDescriptorUrl = "https://raw.githubusercontent.com/gsvrnd2025-alt/VVarmaIVR/main/version.json";
-  otaAutoUpdate   = preferences.getBool("otaAuto", true);
+  otaAutoUpdate   = false; // Force false at boot to prevent spawning the 16KB version-check task
   otaSource       = preferences.getString("otaSource", "github");
   if (!isPrintableASCII(otaSource)) otaSource = "github";
   // Load sync interval from NVS
@@ -5851,6 +6237,9 @@ void handleSerialUpload() {
 }
 
 void loop() {
+  if (customIvrEnabled) {
+    handleCustomIvrRun();
+  }
   handleSerialUpload();
   updateLedIndicators();
 
@@ -6574,6 +6963,43 @@ void processIvrDtmf(String key) {
   lastDtmfMillis = millis();
   lastActivityTime = millis();
   
+  if (currentCallState == STATE_CUSTOM_IVR_RUN) {
+    if (activeNode.type == "wait_dtmf") {
+      if (activeNode.interruptible && !nodeAudioDone) {
+        mp3Stop();
+        nodeAudioDone = true;
+      }
+      String digit = key;
+      bool foundOption = false;
+      for (int i = 0; i < activeNode.optionCount; i++) {
+        if (activeNode.optionKeys[i] == digit) {
+          foundOption = true;
+          loadCustomIvrNode(activeNode.optionNodes[i]);
+          break;
+        }
+      }
+      if (!foundOption) {
+        webLog("[CustomIVR] Invalid option pressed: " + digit);
+        if (activeNode.failNode != "") {
+          loadCustomIvrNode(activeNode.failNode);
+        }
+      }
+    } 
+    else if (activeNode.type == "warranty_verify") {
+      if (activeNode.interruptible && !nodeAudioDone) {
+        mp3Stop();
+        nodeAudioDone = true;
+      }
+      if (key == "*") {
+        dtmfBuffer = "";
+        beep(1000, 100);
+      } else {
+        dtmfBuffer += key;
+      }
+    }
+    return;
+  }
+  
   if (currentCallState == STATE_WAIT_LANGUAGE_DTMF) {
     if (key == "1" || key == "2" || key == "3") {
       ivrSelectedLanguage = key.toInt();
@@ -7252,5 +7678,529 @@ String getDFPlayerCompatiblePath(String filename) {
   
   return filename;
 }
+
+// ============================================================================
+//               VISUAL BUILDER VARIABLE & HELPERS IMPLEMENTATION
+// ============================================================================
+void clearIvrVariables() {
+  ivrVariables.clear();
+}
+
+void setIvrVariable(String name, String val) {
+  name.trim();
+  val.trim();
+  for (auto& v : ivrVariables) {
+    if (v.name.equalsIgnoreCase(name)) {
+      v.value = val;
+      return;
+    }
+  }
+  ivrVariables.push_back({name, val});
+}
+
+String getIvrVariable(String name) {
+  name.trim();
+  for (const auto& v : ivrVariables) {
+    if (v.name.equalsIgnoreCase(name)) {
+      return v.value;
+    }
+  }
+  return "";
+}
+
+String parseTemplate(String templateStr) {
+  for (const auto& v : ivrVariables) {
+    String placeholder = "{" + v.name + "}";
+    int idx = 0;
+    while ((idx = templateStr.indexOf(placeholder, idx)) != -1) {
+      templateStr = templateStr.substring(0, idx) + v.value + templateStr.substring(idx + placeholder.length());
+      idx += v.value.length();
+    }
+  }
+  templateStr.replace("{Phone}", callerNumber);
+  return templateStr;
+}
+
+uint32_t calculateCRC32(const String& str) {
+  uint32_t crc = 0xFFFFFFFF;
+  for (size_t i = 0; i < str.length(); i++) {
+    char ch = str.charAt(i);
+    crc ^= (uint8_t)ch;
+    for (int j = 0; j < 8; j++) {
+      if (crc & 1) {
+        crc = (crc >> 1) ^ 0xEDB88320;
+      } else {
+        crc >>= 1;
+      }
+    }
+  }
+  return ~crc;
+}
+
+// ============================================================================
+//               SQLITE DATABASE CACHING LAYER IMPLEMENTATION
+// ============================================================================
+void rebuildSqliteDbFromCsv() {
+  if (!sdCardFound || !myFS || !sdTake()) return;
+  
+  String csvPath = "/db/ivr_registered_users.csv";
+  if (!myFS->exists(csvPath)) csvPath = "/customers.csv";
+  if (!myFS->exists(csvPath)) {
+    webLog("[SQLite] Rebuild: No source CSV file found.");
+    sdGive();
+    return;
+  }
+  
+  File f = myFS->open(csvPath, FILE_READ);
+  if (!f) {
+    webLog("[SQLite] Rebuild: Failed to open CSV: " + csvPath);
+    sdGive();
+    return;
+  }
+  
+  sqlite3 *db;
+  int rc = sqlite3_open("/sd/db/customers.db", &db);
+  if (rc != SQLITE_OK) rc = sqlite3_open("/db/customers.db", &db);
+  if (rc != SQLITE_OK) {
+    webLog("[SQLite] Rebuild: Failed to open customers.db: " + String(sqlite3_errmsg(db)));
+    sqlite3_close(db);
+    f.close();
+    sdGive();
+    return;
+  }
+  
+  sqlite3_exec(db, "DROP TABLE IF EXISTS customers;", nullptr, nullptr, nullptr);
+  const char* createSql = "CREATE TABLE customers (phone TEXT, name TEXT, serial TEXT PRIMARY KEY, product TEXT, warranty TEXT);";
+  rc = sqlite3_exec(db, createSql, nullptr, nullptr, nullptr);
+  if (rc != SQLITE_OK) {
+    webLog("[SQLite] Rebuild: Table creation failed: " + String(sqlite3_errmsg(db)));
+    sqlite3_close(db);
+    f.close();
+    sdGive();
+    return;
+  }
+  
+  sqlite3_exec(db, "CREATE INDEX idx_phone ON customers(phone);", nullptr, nullptr, nullptr);
+  
+  sqlite3_stmt *res;
+  const char *tail;
+  rc = sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO customers (phone, name, serial, product, warranty) VALUES (?, ?, ?, ?, ?);", -1, &res, &tail);
+  if (rc != SQLITE_OK) {
+    webLog("[SQLite] Rebuild: Prepare failed: " + String(sqlite3_errmsg(db)));
+    sqlite3_close(db);
+    f.close();
+    sdGive();
+    return;
+  }
+  
+  sqlite3_exec(db, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
+  
+  bool isConsolidatedSheet = false;
+  if (f.available()) {
+    String header = f.readStringUntil('\n');
+    if (header.indexOf("Phone Number") != -1) isConsolidatedSheet = true;
+    else f.seek(0);
+  }
+  
+  int count = 0;
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() == 0) continue;
+    
+    String cols[7];
+    int colIdx = 0;
+    int searchIdx = 0;
+    while (searchIdx < line.length() && colIdx < 7) {
+      String cell = "";
+      if (line.charAt(searchIdx) == '"') {
+        searchIdx++;
+        while (searchIdx < line.length()) {
+          if (line.charAt(searchIdx) == '"') {
+            if (searchIdx + 1 < line.length() && line.charAt(searchIdx + 1) == '"') {
+              cell += '"';
+              searchIdx += 2;
+            } else {
+              searchIdx++;
+              break;
+            }
+          } else {
+            cell += line.charAt(searchIdx);
+            searchIdx++;
+          }
+        }
+        if (searchIdx < line.length() && line.charAt(searchIdx) == ',') searchIdx++;
+      } else {
+        int nextComma = line.indexOf(',', searchIdx);
+        if (nextComma == -1) {
+          cell = line.substring(searchIdx);
+          searchIdx = line.length();
+        } else {
+          cell = line.substring(searchIdx, nextComma);
+          searchIdx = nextComma + 1;
+        }
+      }
+      cell.trim();
+      cols[colIdx++] = cell;
+    }
+    
+    String phone = "";
+    String name = "";
+    String product = "";
+    String serial = "";
+    String warranty = "active";
+    
+    if (isConsolidatedSheet) {
+      phone = cols[0];
+      name = cols[1];
+      product = cols[3];
+      serial = cols[2];
+      warranty = cols[4];
+    } else {
+      phone = cols[0];
+      name = cols[1];
+      product = cols[2];
+      serial = cols[3];
+      if (colIdx > 4) warranty = cols[4];
+    }
+    
+    phone.trim(); name.trim(); product.trim(); serial.trim(); warranty.trim();
+    if (phone.length() == 0) continue;
+    
+    sqlite3_bind_text(res, 1, phone.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(res, 2, name.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(res, 3, serial.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(res, 4, product.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(res, 5, warranty.c_str(), -1, SQLITE_TRANSIENT);
+    
+    sqlite3_step(res);
+    sqlite3_reset(res);
+    count++;
+    yield();
+  }
+  
+  sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+  sqlite3_finalize(res);
+  sqlite3_close(db);
+  f.close();
+  sdGive();
+  webLog("[SQLite] Rebuild: Inserted " + String(count) + " records into SQLite DB.");
+}
+
+bool sqliteCheckWarranty(const String& code, String& outStatus) {
+  sqlite3 *db;
+  int rc = sqlite3_open("/sd/db/customers.db", &db);
+  if (rc != SQLITE_OK) {
+    rc = sqlite3_open("/db/customers.db", &db); // Fallback spiffs
+  }
+  if (rc != SQLITE_OK) {
+    webLog("[SQLite] Failed to open customers.db: " + String(sqlite3_errmsg(db)));
+    sqlite3_close(db);
+    return false;
+  }
+
+  sqlite3_stmt *res;
+  const char *tail;
+  rc = sqlite3_prepare_v2(db, "SELECT warranty FROM customers WHERE serial = ? OR phone = ? LIMIT 1;", -1, &res, &tail);
+  if (rc != SQLITE_OK) {
+    webLog("[SQLite] Prepare error: " + String(sqlite3_errmsg(db)));
+    sqlite3_close(db);
+    return false;
+  }
+
+  sqlite3_bind_text(res, 1, code.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(res, 2, code.c_str(), -1, SQLITE_TRANSIENT);
+
+  bool found = false;
+  if (sqlite3_step(res) == SQLITE_ROW) {
+    outStatus = (const char*)sqlite3_column_text(res, 0);
+    found = true;
+  }
+
+  sqlite3_finalize(res);
+  sqlite3_close(db);
+  return found;
+}
+
+bool sqliteCheckUser(const String& phone, String& outName) {
+  String normalized = phone;
+  normalized.trim();
+  if (!normalized.startsWith("+")) {
+    if (normalized.length() == 10) normalized = "+91" + normalized;
+    else if (normalized.length() == 12 && normalized.startsWith("91")) normalized = "+" + normalized;
+  }
+
+  sqlite3 *db;
+  int rc = sqlite3_open("/sd/db/customers.db", &db);
+  if (rc != SQLITE_OK) {
+    rc = sqlite3_open("/db/customers.db", &db); // Fallback spiffs
+  }
+  if (rc != SQLITE_OK) {
+    webLog("[SQLite] Failed to open customers.db: " + String(sqlite3_errmsg(db)));
+    sqlite3_close(db);
+    return false;
+  }
+
+  sqlite3_stmt *res;
+  const char *tail;
+  rc = sqlite3_prepare_v2(db, "SELECT name FROM customers WHERE phone = ? LIMIT 1;", -1, &res, &tail);
+  if (rc != SQLITE_OK) {
+    webLog("[SQLite] Prepare error: " + String(sqlite3_errmsg(db)));
+    sqlite3_close(db);
+    return false;
+  }
+
+  sqlite3_bind_text(res, 1, normalized.c_str(), -1, SQLITE_TRANSIENT);
+
+  bool found = false;
+  if (sqlite3_step(res) == SQLITE_ROW) {
+    const unsigned char* nameCol = sqlite3_column_text(res, 0);
+    if (nameCol != nullptr) {
+      outName = (const char*)nameCol;
+      found = true;
+    }
+  }
+
+  sqlite3_finalize(res);
+  sqlite3_close(db);
+  return found;
+}
+
+// ============================================================================
+//               VISUAL IVR FLOW BUILDER INTERPRETER STATE MACHINE
+// ============================================================================
+bool loadCustomIvrNode(String nodeId) {
+  activeNode.id = nodeId;
+  activeNode.type = "";
+  activeNode.audio = "";
+  activeNode.delayBefore = 0;
+  activeNode.delayAfter = 0;
+  activeNode.repeatCount = 1;
+  activeNode.interruptible = true;
+  activeNode.timeout = 5;
+  activeNode.maxAttempts = 2;
+  activeNode.nextNode = "";
+  activeNode.optionCount = 0;
+  activeNode.smsTemplate = "";
+  activeNode.varName = "";
+  activeNode.varValue = "";
+  activeNode.successNode = "";
+  activeNode.failNode = "";
+  activeNode.claimedNode = "";
+
+  dtmfBuffer = "";
+  nodeStateStartTime = millis();
+  nodeAudioStarted = false;
+  nodeDelayBeforeDone = false;
+  nodeAudioDone = false;
+  nodeDelayAfterDone = false;
+
+  String ivrPath = ivrSourceConfigurator ? "/ivr_menu.json" : "/ivr_flow.json";
+  if (!sdCardFound || !myFS || !sdTake()) return false;
+  File f = myFS->open(ivrPath, FILE_READ);
+  if (!f) {
+    sdGive();
+    webLog("[CustomIVR] Error: " + ivrPath + " not found!");
+    return false;
+  }
+
+  DynamicJsonDocument doc(4096);
+  DeserializationError err = deserializeJson(doc, f);
+  f.close();
+  sdGive();
+
+  if (err) {
+    webLog("[CustomIVR] JSON parse error: " + String(err.c_str()));
+    return false;
+  }
+
+  JsonObject nodes = doc["nodes"];
+  if (!nodes.containsKey(nodeId)) {
+    webLog("[CustomIVR] Node not found in JSON: " + nodeId);
+    return false;
+  }
+
+  JsonObject node = nodes[nodeId];
+  activeNode.type = node["type"] | "play_voice";
+  activeNode.audio = node["audio"] | "";
+  activeNode.delayBefore = node["delay_before"] | 0;
+  activeNode.delayAfter = node["delay_after"] | 0;
+  activeNode.repeatCount = node["repeat_count"] | 1;
+  activeNode.interruptible = node.containsKey("interruptible") ? node["interruptible"].as<bool>() : true;
+  activeNode.timeout = node["timeout"] | 5;
+  activeNode.maxAttempts = node["max_attempts"] | 2;
+  activeNode.nextNode = node["next"] | "";
+  activeNode.smsTemplate = node["sms_template"] | "";
+  activeNode.varName = node["var_name"] | "";
+  activeNode.varValue = node["var_value"] | "";
+  activeNode.successNode = node["success_node"] | "";
+  activeNode.failNode = node["fail_node"] | "";
+  activeNode.claimedNode = node["claimed_node"] | "";
+
+  JsonObject options = node["options"];
+  int idx = 0;
+  for (JsonPair p : options) {
+    if (idx < 12) {
+      activeNode.optionKeys[idx] = p.key().c_str();
+      activeNode.optionNodes[idx] = p.value().as<String>();
+      idx++;
+    }
+  }
+  activeNode.optionCount = idx;
+
+  webLog("[CustomIVR] Loaded Node ID: " + nodeId + " | Type: " + activeNode.type);
+  return true;
+}
+
+void handleCustomIvrRun() {
+  if (currentCallState != STATE_CUSTOM_IVR_RUN) return;
+
+  // 1. Handle delay before audio
+  if (activeNode.delayBefore > 0 && !nodeDelayBeforeDone) {
+    if (millis() - nodeStateStartTime > activeNode.delayBefore) {
+      nodeDelayBeforeDone = true;
+      nodeStateStartTime = millis();
+    } else {
+      return;
+    }
+  } else {
+    nodeDelayBeforeDone = true;
+  }
+
+  // 2. Play audio if configured
+  if (nodeDelayBeforeDone && !nodeAudioStarted) {
+    if (activeNode.audio != "") {
+      safePlayAudio(*myFS, activeNode.audio.c_str());
+      nodeAudioStarted = true;
+      lastAudioPlayMillis = millis();
+    } else {
+      nodeAudioStarted = true;
+      nodeAudioDone = true;
+      nodeStateStartTime = millis();
+    }
+  }
+
+  // 3. Wait for audio to finish
+  if (nodeAudioStarted && !nodeAudioDone) {
+    if (checkAudioFinished()) {
+      nodeAudioDone = true;
+      nodeStateStartTime = millis();
+    }
+  }
+
+  // 4. Handle delay after audio
+  if (nodeAudioDone && !nodeDelayAfterDone) {
+    if (activeNode.delayAfter > 0) {
+      if (millis() - nodeStateStartTime > activeNode.delayAfter) {
+        nodeDelayAfterDone = true;
+        nodeStateStartTime = millis();
+      } else {
+        return;
+      }
+    } else {
+      nodeDelayAfterDone = true;
+    }
+  }
+
+  // 5. Action logic once delays/audio finished
+  if (nodeDelayBeforeDone && nodeAudioStarted && nodeAudioDone && nodeDelayAfterDone) {
+    if (activeNode.type == "play_voice" || activeNode.type == "delay") {
+      if (activeNode.nextNode != "") {
+        loadCustomIvrNode(activeNode.nextNode);
+      } else {
+        changeState(STATE_HANGUP);
+      }
+    } 
+    else if (activeNode.type == "wait_dtmf") {
+      if (millis() - nodeStateStartTime > (activeNode.timeout * 1000)) {
+        nodeAttemptCount++;
+        webLog("[CustomIVR] DTMF Timeout " + String(nodeAttemptCount) + "/" + String(activeNode.maxAttempts));
+        if (nodeAttemptCount >= activeNode.maxAttempts) {
+          if (activeNode.failNode != "") {
+            loadCustomIvrNode(activeNode.failNode);
+          } else {
+            changeState(STATE_HANGUP);
+          }
+        } else {
+          loadCustomIvrNode(activeNode.id);
+        }
+      }
+    }
+    else if (activeNode.type == "send_sms") {
+      if (activeNode.smsTemplate != "") {
+        String smsText = parseTemplate(activeNode.smsTemplate);
+        sendSMS(callerNumber, smsText);
+        addSmsLog(callerNumber, smsText, "Outgoing", "Sent");
+      }
+      if (activeNode.nextNode != "") {
+        loadCustomIvrNode(activeNode.nextNode);
+      } else {
+        changeState(STATE_HANGUP);
+      }
+    }
+    else if (activeNode.type == "customer_verify") {
+      if (isCustomerRegisteredLocal(callerNumber)) {
+        if (activeNode.successNode != "") {
+          loadCustomIvrNode(activeNode.successNode);
+        } else {
+          changeState(STATE_HANGUP);
+        }
+      } else {
+        if (activeNode.failNode != "") {
+          loadCustomIvrNode(activeNode.failNode);
+        } else {
+          changeState(STATE_HANGUP);
+        }
+      }
+    }
+    else if (activeNode.type == "warranty_verify") {
+      if (dtmfBuffer.indexOf('#') != -1) {
+        String code = dtmfBuffer.substring(0, dtmfBuffer.indexOf('#'));
+        code.trim();
+        String status = "";
+        if (sqliteCheckWarranty(code, status)) {
+          setIvrVariable("Warranty", status);
+          if (status.equalsIgnoreCase("claimed")) {
+            loadCustomIvrNode(activeNode.claimedNode != "" ? activeNode.claimedNode : activeNode.failNode);
+          } else {
+            loadCustomIvrNode(activeNode.successNode);
+          }
+        } else {
+          loadCustomIvrNode(activeNode.failNode);
+        }
+      } else if (millis() - nodeStateStartTime > 20000) {
+        loadCustomIvrNode(activeNode.failNode);
+      }
+    }
+    else if (activeNode.type == "complaint_reg") {
+      String ticket = "VRM-" + String(random(100000, 999999));
+      setIvrVariable("ComplaintNo", ticket);
+      sdDbQueueComplaint(callerNumber, getIvrVariable("Warranty"), "Complaint visual builder auto-reg");
+      if (activeNode.nextNode != "") {
+        loadCustomIvrNode(activeNode.nextNode);
+      } else {
+        changeState(STATE_HANGUP);
+      }
+    }
+    else if (activeNode.type == "installation_reg") {
+      String ticket = "INS-" + String(random(100000, 999999));
+      setIvrVariable("ComplaintNo", ticket);
+      sdDbQueueInstallation(callerNumber, getIvrVariable("Warranty"));
+      if (activeNode.nextNode != "") {
+        loadCustomIvrNode(activeNode.nextNode);
+      } else {
+        changeState(STATE_HANGUP);
+      }
+    }
+    else if (activeNode.type == "agent_connect") {
+      startAgentConnection();
+    }
+    else if (activeNode.type == "hangup") {
+      changeState(STATE_HANGUP);
+    }
+  }
+}
+
+
 
 

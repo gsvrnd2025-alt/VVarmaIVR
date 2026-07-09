@@ -150,7 +150,7 @@ function doGet(e) {
 
   // ── IVR ESP32 Dashboard JSON API ──
   const action = e && e.parameter ? String(e.parameter.action || '').trim() : '';
-  if (action === 'getVarmaData' || action === 'initVarmaSheets' || action === 'validateUser' || action === 'get_calls' || action === 'get_messages' || action === 'get_mobiles' || action === 'get_hc_numbers' || action === 'save_hc_number' || action === 'delete_hc_number' || action === 'verifyWarranty' || action === 'registerComplaint' || action === 'registerCustomer' || action === 'registerInstallation' || action === 'getSheetNames' || action === 'getSheetCsv' || action === 'appendCallLog' || action === 'appendSmsLog' || action === 'getOtaVersion') {
+  if (action === 'getVarmaData' || action === 'initVarmaSheets' || action === 'validateUser' || action === 'get_calls' || action === 'get_messages' || action === 'get_mobiles' || action === 'get_hc_numbers' || action === 'save_hc_number' || action === 'delete_hc_number' || action === 'verifyWarranty' || action === 'registerComplaint' || action === 'registerCustomer' || action === 'registerInstallation' || action === 'getSheetNames' || action === 'getSheetCsv' || action === 'appendCallLog' || action === 'appendSmsLog' || action === 'getOtaVersion' || action === 'getWebSettings') {
     _autoInitOnce_(); // Ensure all sheets exist on first deploy
     let result;
     if (action === 'initVarmaSheets') {
@@ -190,6 +190,8 @@ function doGet(e) {
       result = registerCustomer(phone, name, product, serial);
     } else if (action === 'getSheetNames') {
       result = getSheetNames();
+    } else if (action === 'getWebSettings') {
+      result = getWebSettings();
     } else if (action === 'getSheetCsv') {
       const name = e && e.parameter ? String(e.parameter.sheetName || '').trim() : '';
       const csvContent = getSheetAsCsv(name);
@@ -317,7 +319,7 @@ function getVersion() { return CONFIG.version; }
 // ============================================
 
 /**
- * Append a single call log row from the ESP32 SD card to the IVR_Call_Log sheet.
+ * Append a single call log row to the unified IVR_Calls sheet.
  * Query params: timeStr, phone, dtmf, status, direction, sheetId
  */
 function appendIvrCallLog(e) {
@@ -332,18 +334,32 @@ function appendIvrCallLog(e) {
     if (!phone) return { success: false, message: 'phone parameter required' };
 
     const ss = getSpreadsheet();
-    const sheetName = 'IVR_Call_Log';
-    let sheet = ss.getSheetByName(sheetName);
-    if (!sheet) {
-      sheet = ss.insertSheet(sheetName);
-      const headers = ['Date/Time', 'Phone Number', 'DTMF Input', 'Call Status', 'Direction'];
-      sheet.appendRow(headers);
-      sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#cfe2f3');
+    const sheetName = 'IVR_Calls';
+    const sheet = _ensureIvrSheet_(sheetName, IVR_SCHEMAS.IVR_Calls);
+
+    const now = new Date();
+    const callId = 'CALL-' + now.getTime() + '-' + Math.floor(Math.random() * 1000);
+
+    let dateStr = now.toISOString().split('T')[0];
+    let timeValStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    if (timeStr) {
+      const parts = timeStr.split(' ');
+      if (parts.length >= 1) dateStr = parts[0];
+      if (parts.length >= 2) timeValStr = parts[1];
     }
 
-    sheet.appendRow([timeStr, phone, dtmf, status, direction]);
+    sheet.appendRow([
+      callId,
+      phone,
+      dateStr,
+      timeValStr,
+      '0', // duration placeholder
+      status,
+      direction,
+      dtmf
+    ]);
     SpreadsheetApp.flush();
-    return { success: true, message: 'Call log appended' };
+    return { success: true, message: 'Call log appended', callId: callId };
   } catch (err) {
     console.error('appendIvrCallLog Error:', err);
     return { success: false, message: err.message };
@@ -351,7 +367,7 @@ function appendIvrCallLog(e) {
 }
 
 /**
- * Append a single SMS log row from the ESP32 SD card to the IVR_SMS_Log sheet.
+ * Append a single SMS log row to the unified IVR_Messages sheet.
  * Query params: timeStr, phone, message, direction, status, sheetId
  */
 function appendIvrSmsLog(e) {
@@ -366,18 +382,31 @@ function appendIvrSmsLog(e) {
     if (!phone) return { success: false, message: 'phone parameter required' };
 
     const ss = getSpreadsheet();
-    const sheetName = 'IVR_SMS_Log';
-    let sheet = ss.getSheetByName(sheetName);
-    if (!sheet) {
-      sheet = ss.insertSheet(sheetName);
-      const headers = ['Date/Time', 'Phone Number', 'Message', 'Direction', 'Status'];
-      sheet.appendRow(headers);
-      sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#d9ead3');
+    const sheetName = 'IVR_Messages';
+    const sheet = _ensureIvrSheet_(sheetName, IVR_SCHEMAS.IVR_Messages);
+
+    const now = new Date();
+    const msgId = 'MSG-' + now.getTime() + '-' + Math.floor(Math.random() * 1000);
+
+    let dateStr = now.toISOString().split('T')[0];
+    let timeValStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    if (timeStr) {
+      const parts = timeStr.split(' ');
+      if (parts.length >= 1) dateStr = parts[0];
+      if (parts.length >= 2) timeValStr = parts[1];
     }
 
-    sheet.appendRow([timeStr, phone, message, direction, status]);
+    sheet.appendRow([
+      msgId,
+      phone,
+      dateStr,
+      timeValStr,
+      message,
+      direction,
+      status
+    ]);
     SpreadsheetApp.flush();
-    return { success: true, message: 'SMS log appended' };
+    return { success: true, message: 'SMS log appended', messageId: msgId };
   } catch (err) {
     console.error('appendIvrSmsLog Error:', err);
     return { success: false, message: err.message };
@@ -1429,16 +1458,23 @@ function getSheet(key) {
   let sheet = null;
 
   // Advanced Multi-Name Matching for high-priority sheets
-  if (key === 'heroSlides' || key === 'carousel' || key === 'dropdownFields') {
-    let searchNames = [];
-    if (key === 'heroSlides') {
-      searchNames = ['Hero_Slides', 'hero_slides', 'heroSlides', 'HERO_SLIDES'];
-    } else if (key === 'carousel') {
-      searchNames = ['Carousel_Images', 'carousel_images', 'carouselImages', 'CAROUSEL_IMAGES', 'carousel'];
-    } else if (key === 'dropdownFields') {
-      searchNames = ['All Dropdowns', 'All Dropdown Fields', 'All_Dropdown_Fields', 'All_Dropdown_Field', 'Dropdowns', 'All Dropdown', 'All_Dropdown'];
-    }
+  const multiNameMaps = {
+    heroSlides: ['Hero_Slides', 'hero_slides', 'heroSlides', 'HERO_SLIDES'],
+    carousel: ['Carousel_Images', 'carousel_images', 'carouselImages', 'CAROUSEL_IMAGES', 'carousel'],
+    dropdownFields: ['All Dropdowns', 'All Dropdown Fields', 'All_Dropdown_Fields', 'All_Dropdown_Field', 'Dropdowns', 'All Dropdown', 'All_Dropdown'],
+    warranty: ['Warranty_Register', 'Warranties', 'warranty', 'Warranty Register', 'Warranty'],
+    vendors: ['Vendor_List', 'Vendors', 'vendors', 'Vendor List', 'Vendor'],
+    users: ['Users', 'users', 'User List', 'User_List', 'User'],
+    parties: ['Party_List', 'Parties', 'parties', 'Party List', 'Party'],
+    products: ['Product_Models', 'Products', 'Product', 'Product_Model', 'Product Models'],
+    complaints: ['Complaints', 'complaints', 'Complaint_Register', 'Complaint Register'],
+    installation: ['Installation_Register', 'Installations', 'installation', 'Installation Register'],
+    orders: ['Orders', 'orders', 'Order_List', 'Order List'],
+    ledger: ['Ledger', 'ledger', 'Ledger_List', 'Ledger List']
+  };
 
+  if (multiNameMaps[key]) {
+    let searchNames = multiNameMaps[key];
     let bestSheet = null;
     let maxRows = 0;
 
@@ -8572,6 +8608,133 @@ function doOptions(e) {
 }
 
 /**
+ * Safe duplicate sheet merge and cleanup helper.
+ * Copies unique rows based on key columns from duplicate sheet into primary sheet,
+ * then deletes the duplicate sheet.
+ */
+function mergeAndCleanDuplicateSheet(ss, duplicateName, primaryName, uniqueColumns, columnMapping) {
+  try {
+    var dupSheet = ss.getSheetByName(duplicateName);
+    var primSheet = ss.getSheetByName(primaryName);
+    if (!dupSheet || !primSheet) return;
+
+    console.log('Merging duplicate sheet "' + duplicateName + '" into "' + primaryName + '"...');
+
+    var dupRows = dupSheet.getDataRange().getValues();
+    if (dupRows.length < 2) {
+      // Empty or headers only, safe to delete directly
+      ss.deleteSheet(dupSheet);
+      console.log('Deleted empty duplicate sheet: ' + duplicateName);
+      return;
+    }
+
+    var primRows = primSheet.getDataRange().getValues();
+    var dupHeaders = dupRows[0].map(function(h) { return String(h).trim().toLowerCase(); });
+    var primHeaders = primRows[0].map(function(h) { return String(h).trim().toLowerCase(); });
+
+    // Build unique index of primary sheet rows to avoid duplicating records
+    var seenKeys = {};
+    for (var i = 1; i < primRows.length; i++) {
+      var row = primRows[i];
+      var keyParts = uniqueColumns.map(function(col) {
+        var idx = primHeaders.indexOf(col.toLowerCase());
+        return idx !== -1 ? String(row[idx]).trim().toLowerCase() : '';
+      });
+      seenKeys[keyParts.join('|')] = true;
+    }
+
+    // Merge non-duplicate rows from duplicate sheet
+    var rowsToAppend = [];
+    for (var i = 1; i < dupRows.length; i++) {
+      var row = dupRows[i];
+      var keyParts = uniqueColumns.map(function(col) {
+        var mappedCol = (columnMapping && columnMapping[col]) ? columnMapping[col] : col;
+        var idx = dupHeaders.indexOf(mappedCol.toLowerCase());
+        return idx !== -1 ? String(row[idx]).trim().toLowerCase() : '';
+      });
+      var key = keyParts.join('|');
+
+      if (!seenKeys[key]) {
+        // Build new primary row based on header positions
+        var newRow = primHeaders.map(function(ph) {
+          var mappedCol = (columnMapping && columnMapping[ph]) ? columnMapping[ph] : ph;
+          var idx = dupHeaders.indexOf(mappedCol.toLowerCase());
+          if (idx === -1) idx = dupHeaders.indexOf(ph.toLowerCase());
+          return idx !== -1 ? row[idx] : '';
+        });
+        rowsToAppend.push(newRow);
+        seenKeys[key] = true;
+      }
+    }
+
+    if (rowsToAppend.length > 0) {
+      primSheet.getRange(primSheet.getLastRow() + 1, 1, rowsToAppend.length, primHeaders.length).setValues(rowsToAppend);
+      console.log('Merged ' + rowsToAppend.length + ' rows from "' + duplicateName + '" into "' + primaryName + '"');
+    }
+
+    // Safely delete the merged duplicate sheet
+    ss.deleteSheet(dupSheet);
+    console.log('Deleted duplicate sheet: ' + duplicateName);
+  } catch (e) {
+    console.error('Error merging duplicate sheet "' + duplicateName + '" into "' + primaryName + '":', e);
+  }
+}
+
+/**
+ * cleanupDuplicateVarmaSheets
+ * Safe to call multiple times — idempotent.
+ */
+function cleanupDuplicateVarmaSheets() {
+  try {
+    var ss = getSpreadsheet();
+    
+    // 1. Duplicates of IVR_HelpCenter_Numbers
+    var helpCenterDups = ['Help Center Number', 'IVR Help Center Number', 'Help_Center_Number', 'IVR_Help_Center_Number', 'Help Center Numbers', 'Help_Center_Numbers'];
+    helpCenterDups.forEach(function(name) {
+      mergeAndCleanDuplicateSheet(ss, name, 'IVR_HelpCenter_Numbers', ['Number'], {
+        'Number': 'Number',
+        'Name': 'Name',
+        'Role': 'Role'
+      });
+    });
+
+    // 2. Duplicates of IVR_Registered_Users
+    var userDups = ['IVR register user', 'IVR user', 'IVR_Register_User', 'IVR_User', 'IVR register users', 'IVR_Register_Users_List', 'IVR_Users'];
+    userDups.forEach(function(name) {
+      mergeAndCleanDuplicateSheet(ss, name, 'IVR_Registered_Users', ['Phone Number'], {
+        'Phone Number': 'Phone Number',
+        'Name': 'Name'
+      });
+    });
+
+    // 3. Duplicates of IVR_Calls
+    var callDups = ['IVR_Call_Log', 'IVR Call Logs', 'IVR_Call_Logs', 'IVR Call Log'];
+    callDups.forEach(function(name) {
+      mergeAndCleanDuplicateSheet(ss, name, 'IVR_Calls', ['Number', 'Date', 'Time'], {
+        'Number': 'Phone Number',
+        'Date': 'Date',
+        'Time': 'Time',
+        'DTMF_Input': 'DTMF Data'
+      });
+    });
+
+    // 4. Duplicates of IVR_Messages
+    var smsDups = ['IVR_SMS_Log', 'IVR SMS Logs', 'IVR_SMS_Logs', 'IVR SMS Log'];
+    smsDups.forEach(function(name) {
+      mergeAndCleanDuplicateSheet(ss, name, 'IVR_Messages', ['Number', 'Date', 'Time'], {
+        'Number': 'Number',
+        'Date': 'Date',
+        'Time': 'Time',
+        'Message': 'Message'
+      });
+    });
+    
+  } catch (e) {
+    console.error('cleanupDuplicateVarmaSheets error:', e);
+  }
+}
+
+/**
  * initVarmaSheets
  * Safe to call multiple times — idempotent.
  */
@@ -8584,6 +8747,9 @@ function initVarmaSheets() {
     Object.keys(IVR_SCHEMAS).forEach(function (name) {
       _ensureIvrSheet_(name, IVR_SCHEMAS[name]);
     });
+
+    // Run duplicate sheet cleanup
+    cleanupDuplicateVarmaSheets();
 
     // Proactively populate registered users sheet on init
     try {
@@ -9049,7 +9215,8 @@ function getVarmaData() {
       complaints: complaints,
       warranties: warranties,
       orders: orders,
-      ledger: ledger
+      ledger: ledger,
+      helpCenterNumbers: getHcNumbers()
     };
 
   } catch (e) {
@@ -9249,82 +9416,41 @@ function validateUser(phone) {
 
 /**
  * getRegisteredMobiles
- * Consolidates registered phone numbers from Warranty_Register, Party_List, Users,
- * Technician_List, and Dealers_List into a clean, duplicate-free list.
+ * Reads registered phone numbers directly from the consolidated IVR_Registered_Users sheet.
  */
 function getRegisteredMobiles() {
   try {
-    var warrantyData = getData('warranty') || [];
-    var partiesData = getData('parties') || [];
-    var usersData = getData('users') || [];
-    var techniciansData = getData('technicians') || [];
-    var dealersData = getData('dealers') || [];
+    var ss = getSpreadsheet();
+    var sheet = ss.getSheetByName("IVR_Registered_Users");
+    if (!sheet) {
+      syncIvrRegisteredUsers();
+      sheet = ss.getSheetByName("IVR_Registered_Users");
+    }
+    if (!sheet || sheet.getLastRow() < 2) return [];
+
+    var rows = sheet.getDataRange().getValues();
+    var headers = rows[0].map(function (h) { return String(h).trim(); });
 
     var list = [];
-    var seen = {};
+    for (var i = 1; i < rows.length; i++) {
+      var r = rows[i];
+      if (r.some(function (c) { return c !== '' && c !== null && c !== undefined; })) {
+        var phone = String(r[0] || '').trim();
+        var name = String(r[1] || '').trim();
+        var type = String(r[2] || '').trim();
+        var details = String(r[3] || '').trim();
+        var status = String(r[4] || '').trim();
 
-    function addMobile(phone, name, product, serial, status) {
-      if (!phone) return;
-      var clean = String(phone).replace(/\D/g, '');
-      if (clean.length > 10) clean = clean.slice(-10);
-      if (!clean) return;
-      if (seen[clean]) return;
-      seen[clean] = true;
-      list.push({
-        Phone: phone,
-        Mobile: phone,
-        Name: name,
-        Product: product,
-        Serial: serial,
-        Status: status
-      });
-    }
-
-    warrantyData.forEach(function (w) {
-      var name = String(w['Customer Name'] || w.customername || '').trim();
-      var phone = String(w['Mobile Number'] || w.mobilenumber || w.Mobile || w.mobile || '').trim();
-      var product = String(w['Product Model'] || w.productmodel || '').trim();
-      var serial = String(w['Part Number'] || w.partnumber || '').trim();
-      var endDate = String(w['Warranty End Date'] || w.warrantyenddate || '');
-      var status = 'Active Warranty';
-      if (endDate) {
-        try {
-          if (new Date(endDate) < new Date()) status = 'Expired Warranty';
-        } catch (_) { }
+        list.push({
+          Phone: phone,
+          Mobile: phone,
+          Name: name,
+          Product: details,
+          Serial: type, // Map Type to Serial column for localCustomers
+          Status: status
+        });
       }
-      addMobile(phone, name, product, serial, status);
-    });
-
-    partiesData.forEach(function (p) {
-      var name = String(p['Name'] || p.name || '').trim();
-      var phone = String(p['Mobile'] || p.mobile || '').trim();
-      var type = String(p['Type'] || p.type || 'Party').trim();
-      var status = String(p['Status'] || p.status || 'Active').trim();
-      addMobile(phone, name, type, '', status);
-    });
-
-    usersData.forEach(function (u) {
-      var name = String(u['Name'] || u.name || '').trim();
-      var phone = String(u['Mobile'] || u.mobile || '').trim();
-      var role = String(u['Role'] || u.role || 'User').trim();
-      var status = String(u['Status'] || u.status || 'Active').trim();
-      addMobile(phone, name, role, '', status);
-    });
-
-    techniciansData.forEach(function (t) {
-      var name = String(t['Name'] || t.name || '').trim();
-      var phone = String(t['Mobile'] || t.mobile || '').trim();
-      var status = String(t['Status'] || t.status || 'Active').trim();
-      addMobile(phone, name, 'Technician', '', status);
-    });
-
-    dealersData.forEach(function (d) {
-      var name = String(d['Dealer Name'] || d.dealername || d.Name || d.name || '').trim();
-      var phone = String(d['Mobile'] || d.mobile || '').trim();
-      var status = String(d['Status'] || d.status || 'Active').trim();
-      addMobile(phone, name, 'Dealer', '', status);
-    });
-
+    }
     return list;
   } catch (e) {
     console.error('getRegisteredMobiles error:', e);

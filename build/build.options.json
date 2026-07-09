@@ -1,0 +1,9 @@
+{
+  "additionalFiles": "..\\..,..\\..,..\\..,..\\..\\..,..\\..",
+  "compiler.optimization_flags": "-Os",
+  "customBuildProperties": "build.partitions=huge_app,upload.maximum_size=3145728",
+  "fqbn": "esp32:esp32:esp32",
+  "hardwareFolders": "C:\\Users\\GSV\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\3.3.8,C:\\Users\\GSV\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\3.3.8",
+  "otherLibrariesFolders": "C:\\Users\\GSV\\Documents\\Arduino\\libraries",
+  "sketchLocation": "C:\\Users\\GSV\\Pictures\\IVR_Vijay_V2\\GSV_VARMA_IVR\\GSV_VARMA_IVR"
+}

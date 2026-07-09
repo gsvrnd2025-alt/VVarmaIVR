@@ -1,0 +1,18 @@
+#line 1 "C:\\Users\\GSV\\Pictures\\IVR_Vijay_V2\\GSV_VARMA_IVR\\GSV_VARMA_IVR\\vvarma_gsheet_script\\appsscript.json"
+{
+  "timeZone": "Asia/Kolkata",
+  "dependencies": {},
+  "webapp": {
+    "executeAs": "USER_DEPLOYING",
+    "access": "ANYONE_ANONYMOUS"
+  },
+  "exceptionLogging": "STACKDRIVER",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+    "https://mail.google.com/",
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "runtimeVersion": "V8"
+}
