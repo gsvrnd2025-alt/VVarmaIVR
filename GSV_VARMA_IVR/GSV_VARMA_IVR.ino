@@ -79,7 +79,7 @@ struct WavHeaderInfo {
 #define VOICE_LOOP_PATH "/01/003.wav" // Path to play and loop (WAV format only)
 
 // ─── Debug Serial Configuration ──────────────────────────────────────────
-#define ENABLE_DEBUG_SERIAL false // Set to true for debugging on PC, false for standalone mode to prevent boot hangs
+#define ENABLE_DEBUG_SERIAL true // Set to true for debugging on PC, false for standalone mode to prevent boot hangs
 
 
 #define GSM_RX_PIN 16
@@ -3759,7 +3759,7 @@ void handleCaptivePortalRedirect() {
 void setupWebServer() {
   if (serverStarted) return;
 
-  const char *headerkeys[] = {"Cookie"};
+  const char *headerkeys[] = {"Cookie", "Accept-Encoding"};
   size_t headerkeyssize = sizeof(headerkeys) / sizeof(char *);
   server.collectHeaders(headerkeys, headerkeyssize);
   server.enableCORS(true);
